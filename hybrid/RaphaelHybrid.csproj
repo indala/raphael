@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputPath>bin\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>RaphaelHybrid</AssemblyName>
+    <RootNamespace>RaphaelHybrid</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Exclude bridge project from auto-include -->
+    <Compile Remove="RaphaelBridge\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Windows desktop API packages (in-box for net*-windows, pinned to latest preview) -->
+    <PackageReference Include="System.Speech" Version="10.0.0-preview.*" />
+    <PackageReference Include="System.Management" Version="10.0.0-preview.*" />
+  </ItemGroup>
+</Project>

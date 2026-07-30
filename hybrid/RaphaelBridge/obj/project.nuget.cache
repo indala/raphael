@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "jIkdrfAt/E8=",
+  "success": true,
+  "projectFilePath": "D:\\lab 3\\raphael\\hybrid\\RaphaelBridge\\RaphaelBridge.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\admin\\.nuget\\packages\\system.codedom\\10.0.0\\system.codedom.10.0.0.nupkg.sha512",
+    "C:\\Users\\admin\\.nuget\\packages\\system.management\\10.0.0\\system.management.10.0.0.nupkg.sha512",
+    "C:\\Users\\admin\\.nuget\\packages\\system.speech\\10.0.0\\system.speech.10.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

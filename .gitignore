@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+outputs/
+hybrid/obj/
+hybrid/bin/
+*.log
+
+# One-off dev scripts
+benchmark_models.py
+test_all_models.py
+test_results.json
+key_tests/
+
+
+build
+dist

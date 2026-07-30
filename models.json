@@ -1,0 +1,19 @@
+{
+  "effort_levels": {
+    "low": {
+      "max_tokens": 512,
+      "temperature": 0.3,
+      "description": "Fast — greetings, clipboard, basic commands"
+    },
+    "medium": {
+      "max_tokens": 2048,
+      "temperature": 0.5,
+      "description": "Balanced — normal conversation, general tasks"
+    },
+    "high": {
+      "max_tokens": 4096,
+      "temperature": 0.7,
+      "description": "Reasoning — coding, research, analytics, tool creation"
+    }
+  }
+}

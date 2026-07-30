@@ -1,0 +1,29 @@
+{
+  "tools": {
+    "test_tool_a": {
+      "name": "test_tool_a",
+      "version": "0.1.0",
+      "status": "active",
+      "description": "Test tool test_tool_a",
+      "author": "test",
+      "dependencies": [],
+      "depended_by": [],
+      "created": "2026-07-29T17:32:01.091431",
+      "updated": "2026-07-29T17:32:01.203537",
+      "tests": [],
+      "benchmarks": [],
+      "file": "",
+      "changelog": [
+        {
+          "version": "0.1.0",
+          "date": "2026-07-29T17:32:01.091450",
+          "change": "Initial design"
+        }
+      ]
+    }
+  },
+  "_meta": {
+    "version": 1,
+    "description": "Tool Manager metadata registry. Tracks all tools through their lifecycle."
+  }
+}
