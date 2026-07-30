@@ -60,9 +60,10 @@ def get_raphael_status() -> dict:
     Get current status, configuration details, and backend state of the Raphael instance.
     """
     try:
+        from orchestrator.endpoint_registry import get_text_priority
         return {
             "llm_backend": config.LLM_BACKEND,
-            "fallback_backends": config.LLM_FALLBACK_BACKENDS,  # type: ignore[attr-defined]
+            "fallback_backends": get_text_priority(),
             "tts_enabled": state.tts_enabled,
             "audio_input_available": state.audio_input_available,
             "audio_output_available": state.audio_output_available,

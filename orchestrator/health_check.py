@@ -61,11 +61,12 @@ def ping_endpoint(
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
     body = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": _PING_PROMPT}],
-        "max_tokens": 4,
+        "max_tokens": 32,
         "temperature": 0,
     }).encode("utf-8")
 
@@ -76,15 +77,16 @@ def ping_endpoint(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             elapsed = int((time.monotonic() - start) * 1000)
             data = json.loads(resp.read().decode("utf-8"))
-            reply = (
-                (data.get("choices") or [{}])[0]
-                .get("message") or {}
-            ).get("content") or ""
-            reply = reply.strip().lower()
-            if reply and "ok" in reply:
+            msg_obj = ((data.get("choices") or [{}])[0].get("message") or {})
+            reply = msg_obj.get("content") or ""
+            reasoning = msg_obj.get("reasoning_content") or ""
+            
+            # Any valid textual or reasoning response indicates the endpoint is active and working
+            if reply.strip() or reasoning.strip():
                 return PingResult(True, model, elapsed)
+                
             logger.debug("Ping reply unexpected: %r", reply)
-            return PingResult(False, model, error=f"Unexpected response: {reply[:80]}")
+            return PingResult(False, model, error="Empty response content")
     except urllib.error.HTTPError as exc:
         detail = ""
         with contextlib.suppress(Exception):
@@ -124,7 +126,10 @@ def discover_models(
         return []
 
     url = base_url.rstrip("/") + "/models"
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 

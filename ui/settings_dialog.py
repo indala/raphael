@@ -276,6 +276,51 @@ class _DiscoverThread(QThread):
         self.done.emit(models)
 
 
+class AddFallbackModelDialog(QDialog):
+    """Custom premium dialog to select/type fallback models with fuzzy search."""
+    def __init__(self, available_models: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Fallback Model")
+        self.setStyleSheet(_DARK_STYLE)
+        self.resize(400, 150)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        lbl = QLabel("Select or type a fallback model name:")
+        lbl.setStyleSheet("font-weight: 500; color: #f1f5f9;")
+        layout.addWidget(lbl)
+        
+        self.combo = QComboBox(self)
+        self.combo.setEditable(True)
+        self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.combo.setPlaceholderText("Select or enter model name…")
+        
+        # Filter empty items and dynamic info placeholders from the source list
+        clean_models = [m for m in available_models if m and not m.startswith("dynamic")]
+        self.combo.addItems(["", *clean_models])
+        
+        # Setup fuzzy completer
+        completer = QCompleter(self)
+        completer.setModel(self.combo.model())
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.combo.setCompleter(completer)
+        
+        layout.addWidget(self.combo)
+        
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+    def get_selected(self) -> str:
+        return self.combo.currentText().strip()
+
+
 class AddEndpointDialog(QDialog):
     """Smart add-endpoint dialog with autocomplete, dynamic field visibility, and auto-test."""
 
@@ -427,6 +472,14 @@ class AddEndpointDialog(QDialog):
         c.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         c.setPlaceholderText(placeholder)
         c.setMinimumWidth(220)
+        
+        # Setup fuzzy completer to give search suggestion list as user types
+        completer = QCompleter(c)
+        completer.setModel(c.model())
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        c.setCompleter(completer)
+        
         return c
 
     # ── Source autocomplete ──────────────────────────────────────
@@ -511,6 +564,23 @@ class AddEndpointDialog(QDialog):
             name = (src.get("name") or "").lower()
             if t in (label, name):
                 self._set_known_source(src)
+                # When the completer fills in a name that matches an existing
+                # endpoint, reapply its saved values — otherwise _set_known_source
+                # resets them back to the provider's defaults.
+                for ep in self._endpoints:
+                    if ep.name.strip().lower() == t:
+                        self._url_field.setText(ep.base_url)
+                        self._key_field.setText(ep.api_key)
+                        self._set_combo_text_or_add(self._text_model, ep.text_model)
+                        self._set_combo_text_or_add(self._vision_model, ep.vision_model)
+                        self._set_combo_text_or_add(self._stt_model, ep.stt_model)
+                        self._set_combo_text_or_add(self._tts_model, ep.tts_model)
+                        self._fallback_list.clear()
+                        fbs = ep.fallback_models or ([ep.fallback_model] if ep.fallback_model else [])
+                        for fb in fbs:
+                            if fb:
+                                self._fallback_list.addItem(fb)
+                        break
                 return
         self._set_known_source(None)
 
@@ -592,11 +662,12 @@ class AddEndpointDialog(QDialog):
         self._stt_model.setEnabled(enable_key)
         self._tts_model.setEnabled(enable_key)
 
-        # Vision model is enabled only if key field is enabled AND (it's custom OR the known source has vision models)
+        # Vision model is enabled only if key field is enabled AND (it's custom OR the known source has vision models or uses dynamic discovery)
         enable_vision = enable_key
         if is_known:
             vision_models = self._known_source.get("vision_models") or []  # type: ignore[union-attr]
-            if not vision_models:
+            needs_disco = self._known_source.get("_needs_discovery", False)  # type: ignore[union-attr]
+            if not vision_models and not needs_disco:
                 enable_vision = False
         self._vision_model.setEnabled(enable_vision)
         if not enable_vision:
@@ -647,14 +718,13 @@ class AddEndpointDialog(QDialog):
         current_text = self._text_model.currentText()
         self._populate_model_combo(self._text_model, merged, current_text or "")
 
-        # Also update vision if any discovered model looks vision-capable
-        vision_keywords = ("vision", "vl-", "vl/", "-vl-", "omni", "multimodal", "image")
-        new_vision = [m for m in new_models if any(k in m.lower() for k in vision_keywords)]
-        if new_vision:
-            current_vision = self._vision_model.currentText()
-            existing_vision = set(self._vision_model.itemText(i) for i in range(self._vision_model.count()))
-            vision_all = existing_vision | set(new_vision)
-            self._populate_model_combo(self._vision_model, sorted(vision_all), current_vision or "")
+        # Populate vision combo with ALL discovered models — model IDs from
+        # providers like OpenCode don't carry capability flags (e.g. no
+        # "vision" keyword), so the user decides which model is vision-capable.
+        current_vision = self._vision_model.currentText()
+        existing_vision = set(self._vision_model.itemText(i) for i in range(self._vision_model.count()))
+        all_for_vision = sorted(existing_vision | set(merged))
+        self._populate_model_combo(self._vision_model, all_for_vision, current_vision or "")
 
         self._source_status.setText(
             f"Known source — base URL pre-set  ({len(new_models)} models discovered)"
@@ -687,28 +757,22 @@ class AddEndpointDialog(QDialog):
         primary = self._text_model.currentText().strip()
         available = [m for m in self._all_source_models if m != primary]
 
-        if not available:
-            from PyQt6.QtWidgets import QInputDialog
-            text, ok = QInputDialog.getText(
-                self, "Add Fallback Model", "Enter fallback model name:"
-            )
-            if ok and text.strip():
-                if text.strip() == primary:
+        dlg = AddFallbackModelDialog(available, self)
+        if dlg.exec() == 1:
+            text = dlg.get_selected()
+            if text:
+                if text == primary:
                     QMessageBox.warning(self, "Invalid", "Primary LLM model cannot be a fallback.")
                     return
-                self._fallback_list.addItem(text.strip())
-            return
-
-        from PyQt6.QtWidgets import QInputDialog
-        text, ok = QInputDialog.getItem(
-            self, "Add Fallback Model", "Select or type a fallback model:",
-            ["", *available], 0, True,
-        )
-        if ok and text.strip():
-            if text.strip() == primary:
-                QMessageBox.warning(self, "Invalid", "Primary LLM model cannot be a fallback.")
-                return
-            self._fallback_list.addItem(text.strip())
+                # Check for duplicates (silently ignore if already exists)
+                existing = []
+                for i in range(self._fallback_list.count()):
+                    item = self._fallback_list.item(i)
+                    if item is not None:
+                        existing.append(item.text().strip())
+                if text in existing:
+                    return
+                self._fallback_list.addItem(text)
 
     def _remove_fallback(self):
         current = self._fallback_list.currentItem()
@@ -1054,13 +1118,40 @@ class EndpointsConfigTab(ScrollableTab):
             self._render_cards()
 
     def _add_fallback_model_item(self, list_widget: QListWidget):
-        from PyQt6.QtWidgets import QInputDialog
-        text, ok = QInputDialog.getText(
-            self, "Add Fallback Model",
-            "Enter fallback model name:"
-        )
-        if ok and text.strip():
-            list_widget.addItem(text.strip())
+        # Extract index from list_widget object name (e.g. ep_fallback_list_0)
+        try:
+            index = int(list_widget.objectName().split("_")[-1])
+            ep = self._endpoints[index]
+            ep_name = ep.name
+        except Exception:
+            ep_name = ""
+
+        # Load models from provider catalog matching endpoint name
+        available = []
+        if ep_name:
+            from orchestrator.provider_catalog import list_providers
+            providers = list_providers()
+            t = ep_name.strip().lower()
+            for p in providers:
+                p_name = p.get("name", "").strip().lower()
+                p_id = p.get("id", "").strip().lower()
+                if p_name in t or t in p_name or p_id in t or t in p_id:
+                    available = p.get("models", [])
+                    break
+
+        dlg = AddFallbackModelDialog(available, self)
+        if dlg.exec() == 1:
+            text = dlg.get_selected()
+            if text:
+                # Check for duplicates (silently ignore if already exists)
+                existing = []
+                for i in range(list_widget.count()):
+                    item = list_widget.item(i)
+                    if item is not None:
+                        existing.append(item.text().strip())
+                if text in existing:
+                    return
+                list_widget.addItem(text)
 
     def _remove_fallback_model_item(self, list_widget: QListWidget):
         current_item = list_widget.currentItem()

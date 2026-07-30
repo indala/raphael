@@ -85,6 +85,69 @@ def main():
         mcp.run()
         return
 
+    # Check if settings.toml exists and has at least one endpoint configured
+    from _user_settings.settings_manager import settings_path
+    from orchestrator.endpoint_registry import all as _all_eps
+    from orchestrator.endpoint_registry import load as _load_eps
+    
+    path = settings_path()
+    has_endpoints = False
+    if path.exists():
+        try:
+            _load_eps()
+            if _all_eps():
+                has_endpoints = True
+        except Exception:
+            pass
+
+    if not has_endpoints:
+        if "--mcp" in sys.argv:
+            logger.error(
+                "No LLM endpoints are configured in settings.toml.\n"
+                "Please run the desktop application to configure your endpoints or add "
+                "[[endpoints]] sections to ~/.raphael/settings.toml."
+            )
+            sys.exit(1)
+        else:
+            try:
+                from PyQt6.QtWidgets import QApplication, QMessageBox
+                from ui.settings_dialog import SettingsDialog
+                
+                # Start temporary QApplication to show dialogs
+                app = QApplication.instance() or QApplication(sys.argv)
+                if hasattr(app, "setStyle"):
+                    app.setStyle("Fusion")
+                
+                QMessageBox.information(
+                    None,
+                    "Raphael — Configuration Required",
+                    "No LLM endpoints are configured in your settings.\n\n"
+                    "The Settings panel will now open so you can add and configure your LLM backends."
+                )
+                
+                dlg = SettingsDialog(None)
+                res = dlg.exec()
+                if res != 1:  # Not saved (Cancelled/Closed)
+                    logger.info("Configuration cancelled by user. Exiting.")
+                    sys.exit(0)
+                
+                # Verify that they actually saved at least one endpoint
+                _load_eps()
+                if not _all_eps():
+                    QMessageBox.warning(
+                        None,
+                        "Raphael — Configuration Incomplete",
+                        "You must configure at least one LLM endpoint to use Raphael. Exiting."
+                    )
+                    sys.exit(0)
+                
+                # Apply newly saved settings to config module
+                from _user_settings.settings_manager import apply_to_config as _apply_settings
+                _apply_settings(config)
+            except Exception as exc:
+                logger.error("Failed to show initial settings dialog: %s", exc)
+                sys.exit(1)
+
     # Import UI and start it first to show the splash screen immediately
     from ui.raphael_ui import RaphaelUI
     from PyQt6.QtCore import QTimer
