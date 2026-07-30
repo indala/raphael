@@ -322,6 +322,21 @@ class _BrowserSession:
 
     def start(self):
         """Launch the browser and create a persistent context."""
+        # Check for Playwright browsers bundled inside the PyInstaller package
+        if hasattr(sys, "frozen") and hasattr(sys, "_MEIPASS"):
+            _bundled_browsers = Path(sys._MEIPASS) / "ms-playwright"
+            if _bundled_browsers.is_dir():
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_bundled_browsers)
+
+        # Fall back to user AppData directory (installed via --install-playwright)
+        if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+            _default_browsers_dir = (
+                Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+                / ".raphael"
+                / "ms-playwright"
+            )
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_default_browsers_dir)
+
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -337,6 +352,20 @@ class _BrowserSession:
                 "exe": None,
                 "channel": None,
             }
+
+        # Verify Playwright's managed Chromium is installed when no system browser was found
+        if not info.get("exe") and not info.get("channel"):
+            _check_browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+            if _check_browsers_path:
+                _existing = list(Path(_check_browsers_path).glob("chromium-*"))
+                if not _existing:
+                    raise RuntimeError(
+                        "Playwright Chromium browser is not installed.\n\n"
+                        "Run the following command to install it:\n"
+                        "    Raphael.exe --install-playwright\n\n"
+                        "Or re-run the Raphael installer and make sure the\n"
+                        "'Install Playwright browser' step completes."
+                    )
 
         self.playwright = sync_playwright().__enter__()
         engine = info.get("engine", "chromium")

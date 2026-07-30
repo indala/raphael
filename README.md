@@ -23,6 +23,9 @@ Raphael is a desktop AI assistant that combines voice interaction (speech recogn
 - **Knowledge base** — Built-in Windows CLI, desktop, and package management knowledge.
 - **OAuth/token storage** — Secure credential management for API-backed tools (e.g., Upstox).
 - **PyInstaller packaging** — Build a standalone Windows executable via `raphael.spec`.
+- **Inno Setup installer** — Single-file `Raphael_Setup.exe` for end-user distribution with automatic Chromium browser installation.
+- **Auto-update** — Checks GitHub Releases on startup; one-click download and silent install of new versions.
+- **Playwright browser automation** — Bundled Chromium browser for web automation tasks (installed on first run or via installer).
 
 ---
 
@@ -52,6 +55,15 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
+### Or download the installer
+
+Download `Raphael_Setup.exe` from the [Releases](https://github.com/indala/raphael/releases) page and run it. The installer will:
+
+1. Install Raphael to `C:\Program Files\Raphael`
+2. Offer to download Playwright Chromium browser (~300 MB)
+3. Create Start Menu and Desktop shortcuts
+4. Launch Raphael automatically
+
 ### Configure
 
 Copy the example settings file and edit:
@@ -73,6 +85,9 @@ python main.py --mcp
 
 # Development mode — runs dependency checks at startup
 python main.py --dev
+
+# Install/download Playwright Chromium browser (also done by the installer)
+python main.py --install-playwright
 ```
 
 ---
@@ -84,7 +99,13 @@ raphael/
 ├── main.py                   # Entry point — HUD or MCP mode
 ├── config.py                 # Configuration loader (settings.toml + env vars)
 ├── raphael.spec              # PyInstaller build spec
+├── raphael.iss               # Inno Setup installer script
+├── build_app.py              # Build helper — PyInstaller + browser bundling
 ├── raphael_mcp_server.py     # MCP server implementation
+├── raphael_app/              # pip-installable package wrapper
+│   ├── __init__.py
+│   ├── __main__.py
+│   └── entry.py              # CLI entry point (`raphael` command)
 ├── pyproject.toml            # Project metadata + linting/typing config
 ├── requirements.txt          # Python dependencies
 │
@@ -94,52 +115,31 @@ raphael/
 │   ├── plugin.py             # Plugin discovery and lifecycle
 │   ├── skill_registry.py     # Skill registration
 │   ├── dep_check.py          # Dev-mode dependency checks
+│   ├── updater.py            # Auto-update (GitHub release checker)
 │   ├── log_utils.py          # Logging utilities (request IDs)
 │   ├── mcp/                  # MCP tool implementations
 │   └── tools/                # Tool implementations
 │       └── native/           # Browser, weather, web, chart
 │
 ├── agents/                   # Specialized agents
-│   ├── manager_agent.py
-│   ├── researcher_agent.py
-│   ├── coding_agent.py
-│   ├── desktop_agent.py
-│   ├── browser_agent.py
-│   └── tool_manager_agent.py
-│
 ├── controller/               # System controller
-│   └── raphael_controller.py # Main controller logic
-│
 ├── ui/                       # PyQt6 user interface
-│   └── raphael_ui.py         # HUD overlay, splash, log widget
-│
 ├── hybrid/                   # C# native bridge
-│   ├── RaphaelBridge/        # .NET C# bridge project
-│   ├── AudioPlayer.cs        # Audio playback
-│   ├── SpeechRecognition.cs  # WinRT speech recognition
-│   ├── TtsEngine.cs          # Windows TTS engine
-│   ├── ScreenCapture.cs      # Screen capture
-│   ├── SystemMonitor.cs      # CPU/memory/process monitoring
-│   └── ...
+├── modules/                  # Pluggable backend modules (STT, TTS)
 │
-├── modules/                  # Pluggable backend modules
-│   ├── stt_backends/         # Speech-to-text (WinRT, Whisper, Groq)
-│   └── tts_backends/         # Text-to-speech (edge-tts, etc.)
-│
-├── skills/                   # Skills
-│   └── librarian.py
-│
+├── skills/                   # Skills (librarian, etc.)
 ├── plugins/                  # Dynamic plugins
-├── actions/                  # Action registry
-├── knowledge/                # Knowledge base (Windows CLI, etc.)
+├── actions/                  # Action registry (browser_control, etc.)
+├── knowledge/                # Knowledge base
 ├── memory/                   # Persistent file-based memory
 ├── workflows/                # Workflow definitions
 ├── tools_meta/               # Tool metadata and sandbox
 ├── tests/                    # Test suite
-├── assets/                   # Static assets
+├── assets/                   # Static assets (icons, etc.)
 ├── audio/                    # Audio output directory
 ├── docs/                     # Documentation
-└── build/                    # Build output
+├── installer/                # Inno Setup output directory
+└── build/                    # Build artifacts
 ```
 
 ---
@@ -179,10 +179,22 @@ Key configuration options:
 
 ## Building
 
+Two-step build process:
+
 ```bash
-# Build standalone executable with PyInstaller
-pyinstaller raphael.spec
+# Step 1: Build standalone executable with PyInstaller
+python build_app.py
+
+# Step 1b: (optional) Bundle Chromium browser into the .exe (~500 MB)
+python build_app.py --with-browsers
+
+# Step 2: Package into single-file Inno Setup installer
+iscc raphael.iss
+
+# Output: installer\Raphael_Setup.exe
 ```
+
+> **Note:** `build_app.py` also compiles the C# hybrid bridge if `build_hybrid.py` is present, generates app icon assets, and creates a Windows Start Menu shortcut. Pass `--clean` to force a clean PyInstaller cache rebuild.
 
 ---
 

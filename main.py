@@ -10,7 +10,9 @@ os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
 import atexit
 import io
 import logging
+import logging.handlers
 import signal
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -28,7 +30,12 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(config.ROAMING_DIR / "logs" / "raphael.log", mode="a", encoding="utf-8"),
+        logging.handlers.RotatingFileHandler(
+            config.ROAMING_DIR / "logs" / "raphael.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        ),
     ],
 )
 
@@ -43,6 +50,50 @@ if sys.stdout is not None and getattr(sys.stdout, "encoding", None) is not None:
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 logger = logging.getLogger(__name__)
+
+
+def _install_playwright_browsers() -> int:
+    """Download Playwright Chromium browser to the user data directory.
+
+    Uses the bundled Node.js driver that ships with the ``playwright``
+    Python package — no system Node.js required.
+
+    Returns the subprocess exit code (0 = success).
+    """
+    try:
+        from playwright._impl._driver import compute_driver_executable, get_driver_env
+    except ImportError:
+        print("ERROR: Playwright Python package is not installed.", file=sys.stderr)
+        return 1
+
+    browsers_dir = config.ROAMING_DIR / "ms-playwright"
+    browsers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Skip download if Chromium is already installed
+    existing = list(browsers_dir.glob("chromium-*"))
+    if existing:
+        print(f"Playwright Chromium already installed at {existing[0]}")
+        return 0
+
+    node_exe, cli_js = compute_driver_executable()
+    driver_env = get_driver_env()
+
+    env = {**os.environ, **driver_env, "PLAYWRIGHT_BROWSERS_PATH": str(browsers_dir)}
+
+    print(f"Installing Playwright Chromium to {browsers_dir} ...")
+    if sys.stdout:
+        sys.stdout.flush()
+
+    result = subprocess.run(
+        [node_exe, cli_js, "install", "chromium"],
+        env=env,
+        capture_output=False,
+    )
+    if result.returncode == 0:
+        print("Playwright Chromium installed successfully.")
+    else:
+        print(f"Playwright install failed (exit code {result.returncode}).", file=sys.stderr)
+    return result.returncode
 
 
 def validate_config():
@@ -80,6 +131,9 @@ def validate_config():
 
 def main():
     """Entry point — launches PyQt6 HUD or MCP server mode."""
+    if "--install-playwright" in sys.argv:
+        sys.exit(_install_playwright_browsers())
+
     if "--mcp" in sys.argv:
         from raphael_mcp_server import mcp
         mcp.run()
@@ -193,6 +247,35 @@ def main():
 
         atexit.register(_cleanup)
         logger.info("[Startup] Deferred initialization complete.")
+
+        # Check for updates in background (only in GUI mode)
+        def _on_update_found(release):
+            try:
+                from PyQt6.QtWidgets import QMessageBox  # noqa: F811
+                msg = QMessageBox(ui)
+                msg.setWindowTitle("Update Available")
+                msg.setText(
+                    f"Raphael {release.tag_name} is available!\n"
+                    f"(Current version: v{config.VERSION})\n\n"
+                    f"{release.body.strip()[:300]}"
+                )
+                msg.setInformativeText("Download and install the update?")
+                msg.setStandardButtons(
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                )
+                msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+                if msg.exec() == QMessageBox.StandardButton.Yes:
+                    ui.update_splash(80, "Downloading update...")
+                    from orchestrator.updater import download_installer, apply_update
+                    installer = download_installer(release)
+                    if installer:
+                        apply_update(installer)
+            except Exception as exc:
+                logger.warning("Update dialog failed: %s", exc)
+
+        from orchestrator.updater import _check_in_background
+        _check_in_background(_on_update_found)
 
     # Schedule deferred initialization 50ms after the event loop starts
     QTimer.singleShot(50, deferred_init)

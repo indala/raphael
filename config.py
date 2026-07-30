@@ -8,6 +8,8 @@ Environment variables take precedence over settings.toml values.
 import os
 from pathlib import Path
 
+VERSION = "0.1.0"
+
 # Resolve user settings, data, and roaming directories
 try:
     from _user_settings.paths import get_config_dir, get_data_dir, get_roaming_dir

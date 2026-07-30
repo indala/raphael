@@ -1,11 +1,79 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "raphael"
 version = "0.1.0"
-description = "AI orchestrator with multi-provider support"
+description = "Voice-first AI Desktop Assistant for Windows"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Raphael Contributors" },
+]
+
+# ── Runtime dependencies (from requirements.txt) ─────────────────────
+dependencies = [
+    # LLM Backend
+    "openai>=1.0.0",
+    # HTTP / API
+    "httpx>=0.25.0",
+    "requests>=2.31.0",
+    # Model Context Protocol
+    "mcp>=1.0.0",
+    # System / Hardware
+    "psutil>=5.9.0",
+    "pycaw>=0.3.2",
+    # Windows UI Automation
+    "pyautogui>=0.9.54",
+    "pygetwindow>=0.0.9",
+    "pywin32>=306",
+    # Screen Capture
+    "mss>=9.0.1",
+    "Pillow>=10.0.0",
+    # Clipboard
+    "pyperclip>=1.8.2",
+    # Charts / Data Viz
+    "matplotlib>=3.8.0",
+    "plotly>=5.18.0",
+    "numpy>=1.24.0",
+    # Voice — TTS
+    "edge-tts>=6.1.0",
+    "sounddevice>=0.4.6",
+    "miniaudio>=1.7.0",
+    # Voice — STT
+    "faster-whisper>=1.0.0",
+    # Desktop GUI (HUD)
+    "PyQt6>=6.7.0",
+    "mistune>=3.0.0",
+    # Browser Automation
+    "playwright>=1.40.0",
+    # Web Search
+    "ddgs>=6.0",
+    # File Processing
+    "pdfplumber>=0.10.0",
+    "PyPDF2>=3.0.0",
+    "python-docx>=1.0.0",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.0",
+    "mutagen>=1.47.0",
+    "yt-dlp>=2026.0.0",
+]
+
+# ── Entry point: `raphael` CLI command ────────────────────────────────
+[project.scripts]
+raphael = "raphael_app.entry:main"
+
+# ── Optional: `python -m raphael` ─────────────────────────────────────
+# (works via raphael/__main__.py)
+
+# ── Package discovery ─────────────────────────────────────────────────
+[tool.setuptools]
+packages = { find = {} }
+py-modules = ["config", "main", "raphael_mcp_server"]
 
 # ── Ruff: linter + formatter ──────────────────────────────────────────
-
 [tool.ruff]
 target-version = "py314"
 line-length = 100
@@ -39,7 +107,6 @@ indent-style = "space"
 line-ending = "auto"
 
 # ── mypy: type checking ───────────────────────────────────────────────
-
 [tool.mypy]
 python_version = "3.14"
 warn_return_any = true

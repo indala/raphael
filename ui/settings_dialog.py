@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
     QDoubleSpinBox, QMessageBox, QDialogButtonBox, QScrollArea, QFrame,
+    QAbstractItemView,
 )
 
 import config
@@ -324,17 +325,31 @@ class AddFallbackModelDialog(QDialog):
 class AddEndpointDialog(QDialog):
     """Smart add-endpoint dialog with autocomplete, dynamic field visibility, and auto-test."""
 
-    def __init__(self, endpoints: list, parent=None):
+    def __init__(self, endpoints: list, endpoint: Endpoint | None = None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Endpoint")
         self._endpoints = endpoints
+        self._endpoint = endpoint
+        self._edit_mode = endpoint is not None
+
+        if self._edit_mode:
+            self.setWindowTitle(f"Edit Endpoint — {endpoint.name}")  # type: ignore[union-attr]
+        else:
+            self.setWindowTitle("Add Endpoint")
+
         self._known_source: dict | None = None  # matched provider.json entry
         self._loaded_existing_ep_name: str | None = None  # Track if we loaded an existing endpoint
         self._all_source_models: list[str] = []
         self._discover_thread: _DiscoverThread | None = None
+        self._disco_gen = 0  # incremented each time discovery starts; _on_discovery_done checks it to avoid stale callbacks
         self._discoving_models: list[str] = []  # discovered + already in combos
+        self._processing_source = False  # guard against double fire from builtin.activated + textActivated
+        self._last_source_text = ""  # track actual source changes, skipping completer popup-dismissal noise
+        self._closed = False
         self.setMinimumWidth(560)
         self._build_ui()
+
+        if self._edit_mode and endpoint is not None:
+            self._load_endpoint_data(endpoint)
 
     # ── UI construction ──────────────────────────────────────────
 
@@ -363,19 +378,25 @@ class AddEndpointDialog(QDialog):
             label = f"{src.get('label', src.get('name', '?'))}"
             self._source_combo.addItem(label, src)
 
-        # Setup completer for clean contains-based (fuzzy) filtering without stealing focus
-        completer = QCompleter(self)
-        completer.setModel(self._source_combo.model())
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self._source_combo.setCompleter(completer)
+        # Reuse the built-in completer with contains-based fuzzy matching
+        # so that up/down arrow keys navigate the native dropdown correctly
+        # while still showing suggestions as the user types.
+        builtin = self._source_combo.completer()
+        if builtin is not None:
+            builtin.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            builtin.setFilterMode(Qt.MatchFlag.MatchContains)
+            builtin.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            self._source_combo.setCompleter(builtin)
+            builtin.activated.connect(self._on_source_text_changed)
 
-        self._source_combo.lineEdit().textChanged.connect(self._on_source_text_changed)  # type: ignore[union-attr]
-        self._source_combo.lineEdit().textChanged.connect(self._update_ui_states)  # type: ignore[union-attr]
-        # QCompleter handles popup selection — its activated signal fires when
-        # the user picks an item from the completer's popup (QComboBox.activated
-        # does NOT fire in this case).
-        completer.activated.connect(self._on_completer_activated)
+        le = self._source_combo.lineEdit()
+        if le is not None:
+            le.textChanged.connect(self._update_ui_states)
+        # textActivated fires on explicit selection from the native dropdown
+        # or pressing Enter.  The completer's activated signal covers selections
+        # from the suggestion popup.  Either way, run the full provider lookup
+        # + dynamic discovery only when the user actually commits a choice.
+        self._source_combo.textActivated.connect(self._on_source_text_changed)
         src_layout.addRow("Name", self._source_combo)
 
         # Source status label (known vs custom)
@@ -415,7 +436,8 @@ class AddEndpointDialog(QDialog):
         mod_layout.addRow("Vision Model", self._vision_model)
 
         self._fallback_list = QListWidget()
-        self._fallback_list.setMaximumHeight(66)
+        self._fallback_list.setMaximumHeight(120)
+        self._fallback_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         fb_row = QHBoxLayout()
         fb_row.addWidget(self._fallback_list, 1)
         fb_col = QVBoxLayout()
@@ -426,6 +448,13 @@ class AddEndpointDialog(QDialog):
         fb_rm_btn.clicked.connect(self._remove_fallback)
         fb_col.addWidget(fb_add_btn)
         fb_col.addWidget(fb_rm_btn)
+        # Up/down reorder buttons for fallback models
+        fb_up_btn = QPushButton("▲ Up")
+        fb_up_btn.clicked.connect(lambda: self._move_fallback(-1))
+        fb_down_btn = QPushButton("▼ Down")
+        fb_down_btn.clicked.connect(lambda: self._move_fallback(1))
+        fb_col.addWidget(fb_up_btn)
+        fb_col.addWidget(fb_down_btn)
         fb_row.addLayout(fb_col)
         mod_layout.addRow("Fallbacks", fb_row)
 
@@ -486,6 +515,22 @@ class AddEndpointDialog(QDialog):
 
     def _on_source_text_changed(self, text: str):
         """Update self._known_source and load existing endpoint data if name matches."""
+        # Guard against double fire: both builtin.activated and textActivated fire
+        # when user selects from the completer popup.
+        if self._processing_source:
+            return
+        # Skip if text hasn't actually changed (e.g. completer popup dismissal
+        # re-fires activated with the same highlighted text).
+        if text.strip() == self._last_source_text:
+            return
+        self._last_source_text = text.strip()
+        self._processing_source = True
+        try:
+            self._do_source_changed(text)
+        finally:
+            self._processing_source = False
+
+    def _do_source_changed(self, text: str):
         from orchestrator.provider_catalog import list_providers
         providers = list_providers()
 
@@ -554,40 +599,6 @@ class AddEndpointDialog(QDialog):
 
             if matched != self._known_source:
                 self._set_known_source(matched)
-
-    def _on_completer_activated(self, text: str):
-        """QCompleter popup selection — look up provider data by label."""
-        from orchestrator.provider_catalog import list_providers
-        t = text.strip().lower()
-        for src in list_providers():
-            label = (src.get("label") or "").lower()
-            name = (src.get("name") or "").lower()
-            if t in (label, name):
-                self._set_known_source(src)
-                # When the completer fills in a name that matches an existing
-                # endpoint, reapply its saved values — otherwise _set_known_source
-                # resets them back to the provider's defaults.
-                for ep in self._endpoints:
-                    if ep.name.strip().lower() == t:
-                        self._url_field.setText(ep.base_url)
-                        self._key_field.setText(ep.api_key)
-                        self._set_combo_text_or_add(self._text_model, ep.text_model)
-                        self._set_combo_text_or_add(self._vision_model, ep.vision_model)
-                        self._set_combo_text_or_add(self._stt_model, ep.stt_model)
-                        self._set_combo_text_or_add(self._tts_model, ep.tts_model)
-                        self._fallback_list.clear()
-                        fbs = ep.fallback_models or ([ep.fallback_model] if ep.fallback_model else [])
-                        for fb in fbs:
-                            if fb:
-                                self._fallback_list.addItem(fb)
-                        break
-                return
-        self._set_known_source(None)
-
-    def _on_source_selected(self, index: int):
-        """User selected an item from the dropdown."""
-        src = self._source_combo.itemData(index)
-        self._set_known_source(src)
 
     def _set_known_source(self, src: dict | None):
         """Toggle between known-source and custom-source UI state."""
@@ -681,7 +692,36 @@ class AddEndpointDialog(QDialog):
         self._test_check.setEnabled(enable_remaining)
         self._save_btn.setEnabled(enable_remaining)
 
+    def _load_endpoint_data(self, ep: Endpoint):
+        """Pre-populate all form fields from an existing endpoint for editing."""
+        self._source_combo.setCurrentText(ep.name)
+        # Run source-changed logic to match provider catalog (enables discovery, model populators)
+        self._do_source_changed(ep.name)
+        self._last_source_text = ep.name.strip().lower()  # prevent stray completer re-trigger
+        # Override all fields with actual endpoint values (respect overrides from catalog defaults)
+        self._url_field.setText(ep.base_url)
+        self._key_field.setText(ep.api_key)
+        self._text_model.setCurrentText(ep.text_model)
+        self._vision_model.setCurrentText(ep.vision_model)
+        self._stt_model.setCurrentText(ep.stt_model)
+        self._tts_model.setCurrentText(ep.tts_model)
+        models = ep.fallback_models or ([ep.fallback_model] if ep.fallback_model else [])
+        self._fallback_list.clear()
+        for m in models:
+            if m:
+                self._fallback_list.addItem(m)
+        self._update_ui_states()
+        # Let _update_ui_states handle URL visibility based on provider matching
+
     # ── Dynamic model discovery ──────────────────────────────────
+
+    def closeEvent(self, event):  # noqa: N802
+        """Clean up background discovery thread when the dialog is closed."""
+        self._closed = True
+        if self._discover_thread and self._discover_thread.isRunning():
+            self._discover_thread.quit()
+            self._discover_thread.wait(2000)
+        super().closeEvent(event)
 
     def _start_discovery(self):
         """Fetch models from the endpoint's ``/v1/models`` in background."""
@@ -693,14 +733,20 @@ class AddEndpointDialog(QDialog):
         self._discovery_status.setText("Fetching available models…")
         self._discovery_status.setVisible(True)
 
+        self._disco_gen += 1
         self._discover_thread = _DiscoverThread(base_url, api_key)
         self._discover_thread.done.connect(self._on_discovery_done)
         self._discover_thread.start()
 
     def _on_discovery_done(self, models: list[str]):
         """Merge discovered models into the model combos."""
+        gen = self._disco_gen  # snapshot before thread reference is cleared
         self._discovery_status.setVisible(False)
         self._discover_thread = None
+
+        # Stale callback — user switched sources or dialog closed, ignore
+        if gen != self._disco_gen or self._closed:
+            return
 
         if not models:
             return
@@ -779,6 +825,18 @@ class AddEndpointDialog(QDialog):
         if current:
             self._fallback_list.takeItem(self._fallback_list.row(current))
 
+    def _move_fallback(self, direction: int):
+        """Move the selected fallback model up (-1) or down (+1)."""
+        row = self._fallback_list.currentRow()
+        if row < 0:
+            return
+        new_row = row + direction
+        if new_row < 0 or new_row >= self._fallback_list.count():
+            return
+        item = self._fallback_list.takeItem(row)
+        self._fallback_list.insertItem(new_row, item)
+        self._fallback_list.setCurrentRow(new_row)
+
     # ── Save & Test ──────────────────────────────────────────────
 
     def _on_save(self):
@@ -809,11 +867,8 @@ class AddEndpointDialog(QDialog):
         if self._test_check.isChecked():
             self._save_btn.setEnabled(False)
             self._save_btn.setText("Testing...")
-            QMessageBox.information(
-                self, "Testing Endpoint",
-                f"Testing primary model '{data['text_model']}' at {data['base_url']}...\n\n"
-                "This may take a few seconds."
-            )
+            from PyQt6.QtWidgets import QApplication
+            QApplication.processEvents()  # render "Testing..." before blocking
             test_passed = self._run_test(data)
             if not test_passed:
                 return
@@ -961,20 +1016,26 @@ class EndpointsConfigTab(ScrollableTab):
         layout.setSpacing(6)
         layout.setContentsMargins(12, 20, 12, 12)
 
-        # Name field (full width)
+        # Name field (full width) — read-only display
         name_field = _make_field(ep.name, placeholder="e.g. my-ollama")
         name_field.setObjectName(f"ep_name_{index}")
+        name_field.setReadOnly(True)
+        name_field.setStyleSheet("color: #e2e8f0; background: transparent; border: none; font-weight: bold;")
         name_field.setToolTip("Unique name for this endpoint")
         layout.addRow("Name", name_field)
 
-        # Base URL
+        # Base URL — read-only display
         url_field = _make_field(ep.base_url, placeholder="https://api.example.com/v1")
         url_field.setObjectName(f"ep_url_{index}")
+        url_field.setReadOnly(True)
+        url_field.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
         layout.addRow("Base URL", url_field)
 
-        # API key (masked)
+        # API key (masked, read-only with toggle to peek)
         key_field = _make_field(ep.api_key, placeholder="sk-...", password=True)
         key_field.setObjectName(f"ep_key_{index}")
+        key_field.setReadOnly(True)
+        key_field.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
         key_row = QHBoxLayout()
         key_row.addWidget(key_field, 1)
         key_toggle = QPushButton("[show]")
@@ -988,76 +1049,78 @@ class EndpointsConfigTab(ScrollableTab):
         key_row.addWidget(key_toggle)
         layout.addRow("API Key", key_row)
 
-        # LLM Models row (Text & Vision only)
+        # LLM Models row (Text & Vision only) — read-only display
         llm_grid = QHBoxLayout()
         text_model = _make_field(ep.text_model, placeholder="text model")
         text_model.setObjectName(f"ep_text_{index}")
+        text_model.setReadOnly(True)
+        text_model.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
         vision_model = _make_field(ep.vision_model, placeholder="vision model")
         vision_model.setObjectName(f"ep_vision_{index}")
+        vision_model.setReadOnly(True)
+        vision_model.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
         llm_grid.addWidget(QLabel("Text:"))
         llm_grid.addWidget(text_model, 1)
         llm_grid.addWidget(QLabel("Vision:"))
         llm_grid.addWidget(vision_model, 1)
         layout.addRow("LLM Models", llm_grid)
 
-        # Fallback Models list row
-        fallback_layout = QHBoxLayout()
-        fallback_list = QListWidget()
-        fallback_list.setObjectName(f"ep_fallback_list_{index}")
-        fallback_list.setMaximumHeight(80)
+        # Fallback Models row — tag-style badges
+        fb_widget = QWidget()
+        fb_widget.setStyleSheet("background: transparent;")
+        fb_layout = QHBoxLayout(fb_widget)
+        fb_layout.setContentsMargins(0, 0, 0, 0)
+        fb_layout.setSpacing(6)
 
-        # Populate list
-        if hasattr(ep, "fallback_models") and ep.fallback_models:
-            for fb_m in ep.fallback_models:
-                if fb_m:
-                    fallback_list.addItem(fb_m)
-        elif ep.fallback_model:
-            fallback_list.addItem(ep.fallback_model)
+        models = ep.fallback_models or ([ep.fallback_model] if ep.fallback_model else [])
+        any_fb = False
+        for fb_m in models:
+            if fb_m:
+                any_fb = True
+                tag = QLabel(fb_m)
+                tag.setStyleSheet(
+                    "background-color: #0f172a; color: #94a3b8; "
+                    "padding: 2px 8px; border-radius: 4px; "
+                    "border: 1px solid #334155; font-size: 11px;"
+                )
+                fb_layout.addWidget(tag)
+        if not any_fb:
+            empty = QLabel("—")
+            empty.setStyleSheet("color: #475569; font-style: italic;")
+            fb_layout.addWidget(empty)
+        fb_layout.addStretch()
+        layout.addRow("Fallbacks", fb_widget)
 
-        fallback_layout.addWidget(fallback_list, 1)
-
-        fb_buttons = QVBoxLayout()
-        fb_buttons.setSpacing(4)
-
-        fb_add = QPushButton("+ Add")
-        fb_add.setToolTip("Add new fallback model")
-        fb_add.clicked.connect(lambda checked, l=fallback_list: self._add_fallback_model_item(l))
-
-        fb_del = QPushButton("- Remove")
-        fb_del.setToolTip("Remove selected fallback model")
-        fb_del.clicked.connect(lambda checked, l=fallback_list: self._remove_fallback_model_item(l))
-
-        fb_up = QPushButton("▲")
-        fb_up.setToolTip("Move selected fallback model up")
-        fb_up.clicked.connect(lambda checked, l=fallback_list: self._move_list_item_generic(l, -1))
-
-        fb_down = QPushButton("▼")
-        fb_down.setToolTip("Move selected fallback model down")
-        fb_down.clicked.connect(lambda checked, l=fallback_list: self._move_list_item_generic(l, 1))
-
-        fb_buttons.addWidget(fb_add)
-        fb_buttons.addWidget(fb_del)
-        fb_buttons.addWidget(fb_up)
-        fb_buttons.addWidget(fb_down)
-
-        fallback_layout.addLayout(fb_buttons)
-        layout.addRow("Fallback Models", fallback_layout)
-
-        # STT / TTS Models row
+        # STT / TTS Models row — read-only display
         audio_grid = QHBoxLayout()
         stt_model = _make_field(ep.stt_model, placeholder="STT model (e.g. whisper-large-v3)")
         stt_model.setObjectName(f"ep_stt_{index}")
+        stt_model.setReadOnly(True)
+        stt_model.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
         tts_model = _make_field(ep.tts_model, placeholder="TTS model (e.g. eleven_multilingual_v2)")
         tts_model.setObjectName(f"ep_tts_{index}")
+        tts_model.setReadOnly(True)
+        tts_model.setStyleSheet("color: #94a3b8; background: transparent; border: none;")
         audio_grid.addWidget(QLabel("STT:"))
         audio_grid.addWidget(stt_model, 1)
         audio_grid.addWidget(QLabel("TTS:"))
         audio_grid.addWidget(tts_model, 1)
         layout.addRow("Audio Models", audio_grid)
 
-        # Actions row
+        # Actions row — Edit opens the full dialog, Delete removes
         actions = QHBoxLayout()
         actions.addStretch()
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0ea5e9; color: white; padding: 4px 14px;
+                border-radius: 4px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #38bdf8; }
+        """)
+        edit_btn.clicked.connect(lambda checked, name=ep.name: self._on_edit(name))
+        actions.addWidget(edit_btn)
 
         delete_btn = QPushButton("Delete")
         delete_btn.setStyleSheet("""
@@ -1080,7 +1143,7 @@ class EndpointsConfigTab(ScrollableTab):
         """Open the Add Endpoint dialog with provider picker and model dropdowns."""
         from orchestrator.endpoint_registry import Endpoint, add as _add_ep
 
-        dialog = AddEndpointDialog(self._endpoints, self)
+        dialog = AddEndpointDialog(self._endpoints, parent=self)
         if not dialog.exec():
             return
 
@@ -1117,56 +1180,41 @@ class EndpointsConfigTab(ScrollableTab):
             remove(name)
             self._render_cards()
 
-    def _add_fallback_model_item(self, list_widget: QListWidget):
-        # Extract index from list_widget object name (e.g. ep_fallback_list_0)
-        try:
-            index = int(list_widget.objectName().split("_")[-1])
-            ep = self._endpoints[index]
-            ep_name = ep.name
-        except Exception:
-            ep_name = ""
+    def _on_edit(self, name: str):
+        """Open the Add Endpoint dialog pre-loaded with the endpoint's data for editing."""
+        from orchestrator.endpoint_registry import Endpoint, add as _add_ep, remove as _remove_ep
 
-        # Load models from provider catalog matching endpoint name
-        available = []
-        if ep_name:
-            from orchestrator.provider_catalog import list_providers
-            providers = list_providers()
-            t = ep_name.strip().lower()
-            for p in providers:
-                p_name = p.get("name", "").strip().lower()
-                p_id = p.get("id", "").strip().lower()
-                if p_name in t or t in p_name or p_id in t or t in p_id:
-                    available = p.get("models", [])
-                    break
-
-        dlg = AddFallbackModelDialog(available, self)
-        if dlg.exec() == 1:
-            text = dlg.get_selected()
-            if text:
-                # Check for duplicates (silently ignore if already exists)
-                existing = []
-                for i in range(list_widget.count()):
-                    item = list_widget.item(i)
-                    if item is not None:
-                        existing.append(item.text().strip())
-                if text in existing:
-                    return
-                list_widget.addItem(text)
-
-    def _remove_fallback_model_item(self, list_widget: QListWidget):
-        current_item = list_widget.currentItem()
-        if current_item:
-            list_widget.takeItem(list_widget.row(current_item))
-
-    def _move_list_item_generic(self, list_widget: QListWidget, direction: int):
-        row = list_widget.currentRow()
-        if row < 0:
+        # Find the endpoint by name
+        ep = next((e for e in self._endpoints if e.name == name), None)
+        if not ep:
             return
-        target = row + direction
-        if 0 <= target < list_widget.count():
-            item = list_widget.takeItem(row)
-            list_widget.insertItem(target, item)
-            list_widget.setCurrentRow(target)
+
+        dialog = AddEndpointDialog(self._endpoints, endpoint=ep, parent=self)
+        if not dialog.exec():
+            return
+
+        data = dialog.get_endpoint_data()
+        if not data["name"] or not data["base_url"]:
+            QMessageBox.warning(self, "Incomplete", "Name and Base URL are required.")
+            return
+
+        new_ep = Endpoint(
+            name=data["name"],
+            base_url=data["base_url"],
+            api_key=data["api_key"],
+            text_model=data["text_model"],
+            vision_model=data["vision_model"],
+            stt_model=data["stt_model"],
+            tts_model=data["tts_model"],
+            fallback_model=data.get("fallback_model", ""),
+            fallback_models=data.get("fallback_models", []),
+        )
+
+        # If the name changed, drop the old entry first
+        if name != data["name"]:
+            _remove_ep(name)
+        _add_ep(new_ep)
+        self._render_cards()
 
     def _read_cards(self):
         """Read field values from the card widgets into self._endpoints."""
@@ -1884,8 +1932,16 @@ class PriorityTab(ScrollableTab):
     def refresh(self, endpoint_names: list[str]):
         """Populate priority lists from the current endpoint names, preserving existing order."""
         # Get existing order from UI first
-        existing_text_order = [self._text_list.item(i).text() for i in range(self._text_list.count())]  # type: ignore[union-attr]
-        existing_vision_order = [self._vision_list.item(i).text() for i in range(self._vision_list.count())]  # type: ignore[union-attr]
+        existing_text_order = []
+        for i in range(self._text_list.count()):
+            item = self._text_list.item(i)
+            if item is not None:
+                existing_text_order.append(item.text())
+        existing_vision_order = []
+        for i in range(self._vision_list.count()):
+            item = self._vision_list.item(i)
+            if item is not None:
+                existing_vision_order.append(item.text())
 
         # If UI lists are empty, load from config/saved settings
         if not existing_text_order:
@@ -1917,8 +1973,16 @@ class PriorityTab(ScrollableTab):
         self._vision_list.addItems(sorted_vision_names)
 
     def collect(self) -> dict:
-        text_priority = [self._text_list.item(i).text() for i in range(self._text_list.count())]  # type: ignore[union-attr]
-        vision_priority = [self._vision_list.item(i).text() for i in range(self._vision_list.count())]  # type: ignore[union-attr]
+        text_priority = []
+        for i in range(self._text_list.count()):
+            item = self._text_list.item(i)
+            if item is not None:
+                text_priority.append(item.text())
+        vision_priority = []
+        for i in range(self._vision_list.count()):
+            item = self._vision_list.item(i)
+            if item is not None:
+                vision_priority.append(item.text())
         return {
             "TEXT_PRIORITY": text_priority,
             "VISION_PRIORITY": vision_priority,

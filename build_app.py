@@ -90,6 +90,66 @@ def create_start_menu_shortcut(target_exe: Path):
         print(f"[Build App] WARNING: Could not create Start Menu shortcut: {e}")
 
 
+def install_playwright_browsers() -> Path | None:
+    """Download Playwright Chromium and return the path to the browser directory.
+
+    Returns None if the download fails or the package is not available.
+    """
+    try:
+        from playwright._impl._driver import compute_driver_executable, get_driver_env
+
+        # Download to a staging directory
+        staging_dir = ROOT_DIR / "build" / "ms-playwright"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        node_exe, cli_js = compute_driver_executable()
+        driver_env = get_driver_env()
+        env = {**os.environ, **driver_env, "PLAYWRIGHT_BROWSERS_PATH": str(staging_dir)}
+
+        print("[Build App] Downloading Playwright Chromium browser...")
+        res = subprocess.run(
+            [node_exe, cli_js, "install", "chromium"],
+            env=env, capture_output=True, text=True,
+        )
+        if res.returncode != 0:
+            print(f"[Build App] WARNING: Playwright install failed:\n{res.stderr}")
+            return None
+
+        # Find the downloaded chromium directory
+        chromium_dirs = list(staging_dir.glob("chromium-*"))
+        if chromium_dirs:
+            print(f"[Build App] Playwright Chromium downloaded: {chromium_dirs[0]}")
+            return staging_dir
+        return None
+    except Exception as e:
+        print(f"[Build App] WARNING: Could not install Playwright browsers: {e}")
+        return None
+
+
+def bundle_playwright_browsers(browsers_staging: Path):
+    """Copy Playwright browser binaries into the PyInstaller dist bundle."""
+    dist_internal = ROOT_DIR / "dist" / "Raphael" / "_internal" / "ms-playwright"
+    dist_internal.mkdir(parents=True, exist_ok=True)
+
+    for item in browsers_staging.iterdir():
+        dest = dist_internal / item.name
+        if item.is_dir():
+            import shutil
+            shutil.copytree(item, dest, dirs_exist_ok=True)
+            print(f"[Build App] Bundled browser: {item.name} ({_dir_size(dest) / 1024 / 1024:.0f} MB)")
+        else:
+            import shutil
+            shutil.copy2(item, dest)
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        if f.is_file():
+            total += f.stat().st_size
+    return total
+
+
 def run_pyinstaller_build(clean: bool = False):
     """Execute PyInstaller build with raphael.spec."""
     spec_path = ROOT_DIR / "raphael.spec"
@@ -125,6 +185,8 @@ def main():
     parser = argparse.ArgumentParser(description="Build helper script for Raphael standalone Windows app.")
     parser.add_argument("--clean", action="store_true", help="Force clean PyInstaller build (wipes cache)")
     parser.add_argument("--skip-hybrid", action="store_true", help="Skip compiling the C# hybrid binaries")
+    parser.add_argument("--with-browsers", action="store_true",
+                        help="Pre-download Playwright Chromium and bundle it (~500 MB installer)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -139,7 +201,18 @@ def main():
     else:
         print("[Build App] Skipping C# hybrid build as requested.")
 
+    # Optionally pre-download Playwright Chromium browser
+    browsers_dir = None
+    if args.with_browsers:
+        browsers_dir = install_playwright_browsers()
+    else:
+        print("[Build App] Playwright browsers will be downloaded during installation (--install-playwright).")
+
     if run_pyinstaller_build(clean=args.clean):
+        # Bundle browsers into dist AFTER PyInstaller creates the output
+        if args.with_browsers and browsers_dir:
+            bundle_playwright_browsers(browsers_dir)
+        sys.exit(0)
         sys.exit(0)
     else:
         sys.exit(1)

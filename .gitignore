@@ -2,9 +2,10 @@
 __pycache__/
 *.pyc
 outputs/
-hybrid/obj/
-hybrid/bin/
+hybrid/**/obj/
+hybrid/**/bin/
 *.log
+*.egg-info/
 
 # One-off dev scripts
 benchmark_models.py
@@ -15,3 +16,4 @@ key_tests/
 
 build
 dist
+installer/
