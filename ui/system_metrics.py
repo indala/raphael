@@ -32,6 +32,7 @@ class SystemMonitor(threading.Thread):
         self._lock = threading.Lock()
         self._running = True
         self._stop_event = threading.Event()
+        self._refresh_event = threading.Event()
 
         # Latest readings
         self.cpu_percent = 0.0
@@ -46,10 +47,23 @@ class SystemMonitor(threading.Thread):
 
         # Callbacks for UI thread
         self._on_update: Callable[[float, float, float, float, float], object] | None = None
+        self._on_audio_update: Callable[[int, bool], object] | None = None
+
+        # Audio state
+        self.spk_vol = 100
+        self.spk_muted = False
 
     def set_callback(self, cb: Callable[[float, float, float, float, float], object]) -> None:
         """Register a callback fn(cpu, mem, net, gpu, temp) called on each poll."""
         self._on_update = cb
+
+    def set_audio_callback(self, cb: Callable[[int, bool], object]) -> None:
+        """Register a callback fn(spk_vol, spk_muted) called on each poll when speaker state is read."""
+        self._on_audio_update = cb
+
+    def refresh(self):
+        """Signal the background thread to poll immediately."""
+        self._refresh_event.set()
 
     def stop(self):
         self._running = False
@@ -153,7 +167,25 @@ class SystemMonitor(threading.Thread):
 
         return 0.0
 
+    def _poll_speaker(self) -> tuple[int, bool]:
+        """Read current master speaker volume % and mute status via pycaw."""
+        try:
+            from pycaw.pycaw import AudioUtilities
+            spk = AudioUtilities.GetSpeakers()
+            vol = spk.EndpointVolume
+            pct = round(vol.GetMasterVolumeLevelScalar() * 100)
+            muted = bool(vol.GetMute())
+            return pct, muted
+        except Exception:
+            return 100, False
+
     def run(self):
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+
         # Initialize net tracking inside the background thread so it doesn't block the GUI thread during creation
         try:
             self._last_net = psutil.net_io_counters().bytes_recv
@@ -180,24 +212,36 @@ class SystemMonitor(threading.Thread):
                         break
                     continue
                 consecutive_failures = 0
+                spk_vol, spk_muted = self._poll_speaker()
                 with self._lock:
                     self.cpu_percent = snap.get("cpu_percent", 0.0)
                     self.mem_percent = snap.get("mem_percent", 0.0)
                     self.net_speed = snap.get("net_speed_kbps", 0.0)
                     self.gpu_percent = snap.get("gpu_percent", 0.0)
                     self.cpu_temp = snap.get("cpu_temp", 0.0)
+                    self.spk_vol = spk_vol
+                    self.spk_muted = spk_muted
 
                 if self._on_update:
                     self._on_update(
                         self.cpu_percent, self.mem_percent,
                         self.net_speed, self.gpu_percent, self.cpu_temp,
                     )
+                if self._on_audio_update:
+                    self._on_audio_update(spk_vol, spk_muted)
             except Exception:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
                     logger.debug("Bridge dead after failures — stopping C# system monitor")
                     break
-            self._stop_event.wait(self.interval)
+            # Wait with short checks to remain responsive to refresh/stop
+            for _ in range(max(1, int(self.interval / 0.05))):
+                if self._stop_event.is_set():
+                    return
+                if self._refresh_event.is_set():
+                    self._refresh_event.clear()
+                    break
+                self._stop_event.wait(0.05)
 
     def _run_python(self):
         """Poll using psutil (pure Python fallback)."""
@@ -216,6 +260,7 @@ class SystemMonitor(threading.Thread):
 
                 gpu = self._poll_gpu()
                 temp = self._poll_temp()
+                spk_vol, spk_muted = self._poll_speaker()
 
                 with self._lock:
                     self.cpu_percent = cpu
@@ -223,12 +268,23 @@ class SystemMonitor(threading.Thread):
                     self.net_speed = net_speed
                     self.gpu_percent = gpu
                     self.cpu_temp = temp
+                    self.spk_vol = spk_vol
+                    self.spk_muted = spk_muted
 
                 if self._on_update:
                     self._on_update(cpu, mem, net_speed, gpu, temp)
+                if self._on_audio_update:
+                    self._on_audio_update(spk_vol, spk_muted)
 
             except Exception:
                 pass
 
-            self._stop_event.wait(self.interval)
+            # Wait with short checks to remain responsive to refresh/stop
+            for _ in range(max(1, int(self.interval / 0.05))):
+                if self._stop_event.is_set():
+                    return
+                if self._refresh_event.is_set():
+                    self._refresh_event.clear()
+                    break
+                self._stop_event.wait(0.05)
 

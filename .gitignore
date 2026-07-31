@@ -17,3 +17,7 @@ key_tests/
 build
 dist
 installer/
+
+
+# Playwright MCP cache
+.playwright-mcp/

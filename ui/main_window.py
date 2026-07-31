@@ -162,6 +162,7 @@ class MainWindow(QMainWindow):
 
     # Signal for thread-safe metric updates from SystemMonitor
     metrics_signal = pyqtSignal(float, float, float, float, float)
+    audio_signal = pyqtSignal(int, bool)
     chat_submitted = pyqtSignal(str)
     closing = pyqtSignal()                     # emitted before Qt event loop shuts down
     toggle_sleep_triggered = pyqtSignal()
@@ -176,6 +177,9 @@ class MainWindow(QMainWindow):
         self._is_quitting = False
         self._audio_input_available = True
         self._audio_output_available = True
+        self._curr_mic_vol = 100
+        self._curr_spk_vol = 100
+        self._curr_spk_muted = False
         self.placeholder_tasks: QLabel | None = None
         self.setWindowTitle("Raphael")
         self.setStyleSheet("background-color: #00060a;")
@@ -194,12 +198,38 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(12, 12, 12, 12)
         left_layout.setSpacing(8)
 
+        sys_header = QWidget()
+        sys_header_layout = QHBoxLayout(sys_header)
+        sys_header_layout.setContentsMargins(0, 0, 0, 0)
+
         sys_label = QLabel("SYSTEM")
         sys_label.setStyleSheet("""
             color: #00d4ff; font-size: 10px; font-family: Consolas; font-weight: bold;
             letter-spacing: 2px;
         """)
-        left_layout.addWidget(sys_label)
+        sys_header_layout.addWidget(sys_label)
+        sys_header_layout.addStretch()
+
+        self.refresh_metrics_btn = QPushButton("↻")
+        self.refresh_metrics_btn.setFixedSize(20, 20)
+        self.refresh_metrics_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_metrics_btn.setToolTip("Refresh system metrics now")
+        self.refresh_metrics_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #00d4ff;
+                border: 1px solid #1a2a35;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #001a24;
+                border: 1px solid #00d4ff;
+            }
+        """)
+        sys_header_layout.addWidget(self.refresh_metrics_btn)
+
+        left_layout.addWidget(sys_header)
 
         self.cpu_bar = MetricBar("CPU", "#00d4ff")
         self.mem_bar = MetricBar("MEM", "#00ff88")
@@ -485,10 +515,14 @@ class MainWindow(QMainWindow):
 
         # ── System monitor (thread-safe via signal) ──
         self.metrics_signal.connect(self._on_metrics)
+        self.audio_signal.connect(self._on_audio_metrics)
         self.monitor = SystemMonitor()
         self.monitor.set_callback(lambda cpu, mem, net, gpu, temp:
                                   self.metrics_signal.emit(cpu, mem, net, gpu, temp))
+        self.monitor.set_audio_callback(lambda spk_vol, spk_muted:
+                                        self.audio_signal.emit(spk_vol, spk_muted))
         self.monitor.start()
+        self.refresh_metrics_btn.clicked.connect(self.monitor.refresh)
 
         # ── Default size ──
         self.resize(1280, 720)
@@ -510,6 +544,9 @@ class MainWindow(QMainWindow):
         self.net_bar.set_value(min(100, net / 10))     # scale network KB/s → %
         self.gpu_bar.set_value(gpu)
         self.temp_bar.set_value(min(100, temp / 1.2))  # scale temp → %
+
+    def _on_audio_metrics(self, spk_vol: int, spk_muted: bool):
+        self.set_audio_state(self._curr_mic_vol, spk_vol, spk_muted)
 
     def _on_send(self):
         text = self.chat_input.text().strip()
@@ -711,6 +748,9 @@ class MainWindow(QMainWindow):
 
     def set_audio_state(self, mic_vol: int, spk_vol: int, spk_muted: bool):
         """Update the volume indicator labels below the controls."""
+        self._curr_mic_vol = mic_vol
+        self._curr_spk_vol = spk_vol
+        self._curr_spk_muted = spk_muted
         # Mic volume
         if not self._audio_input_available:
             self.mic_vol_label.setText("Mic: N/A")
@@ -738,6 +778,10 @@ class MainWindow(QMainWindow):
             self.spk_vol_label.setStyleSheet(
                 f"color: {'#ff3366' if spk_vol == 0 else '#00d4ff'}; font-size: 10px; font-family: Consolas;"
             )
+
+        # Bi-directionally sync MusicPanel volume slider with Windows system speaker volume
+        if hasattr(self, "music_panel") and self.music_panel:
+            self.music_panel.update_system_volume(spk_vol)
 
     def update_task_badge(self, task_id: str, label: str, status: str, tool_name: str = "", current_action: str = ""):
         if task_id not in self._task_badges:

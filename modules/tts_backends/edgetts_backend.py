@@ -104,13 +104,29 @@ class EdgeTTSBackend(TTSBackend):
             loop.close()
 
     def _play_mci(self, file_path: str, interrupt: threading.Event | None):
-        """Play MP3 via Windows MCI with interrupt polling and silence compression."""
-        # Compress silence in the generated audio before playback
+        """Play audio via Windows MCI with silence compression (MP3 → WAV conversion)."""
+        # EdgeTTS outputs MP3 but silence compression needs WAV PCM16.
+        # Convert MP3 → WAV via miniaudio, then compress, then play compressed WAV.
+        wav_path = None
+        cleanup_paths = [file_path]
         try:
-            from modules.tts import _compress_audio_file
-            _compress_audio_file(file_path)
+            import miniaudio
+            mp3_audio = miniaudio.read_file(file_path)
+            base = os.path.splitext(file_path)[0]
+            wav_path = base + "_tmp.wav"
+            miniaudio.wav_write_s16(wav_path, mp3_audio.samples,
+                                     mp3_audio.nchannels, mp3_audio.sample_rate)
+            cleanup_paths.append(wav_path)
+
+            # Silence compression — now works since it's WAV PCM16
+            try:
+                from modules.tts import _compress_audio_file
+                _compress_audio_file(wav_path)
+            except Exception:
+                pass  # Play uncompressed WAV if compression fails
         except Exception:
-            pass
+            # miniaudio failed — fall back to original MP3
+            wav_path = file_path
 
         import ctypes
         from ctypes import wintypes
@@ -120,11 +136,16 @@ class EdgeTTSBackend(TTSBackend):
                 mci_send = ctypes.windll.winmm.mciSendStringW
                 mci_send.restype = wintypes.UINT
 
-                # Open
                 alias = "edge_tts"
-                cmd_open = f'open "{file_path}" type mpegvideo alias {alias}'
+
+                # Determine MCI device type from file extension
+                is_mp3 = str(wav_path).lower().endswith(".mp3") if wav_path else False
+                device_type = "mpegvideo" if is_mp3 else "waveaudio"
+
+                # Open
+                cmd_open = f'open "{wav_path}" type {device_type} alias {alias}'
                 if mci_send(cmd_open, None, 0, None) != 0:
-                    logger.error("MCI open failed")
+                    logger.error("MCI open failed for %s", wav_path)
                     return
 
                 # Play
@@ -147,6 +168,7 @@ class EdgeTTSBackend(TTSBackend):
             except Exception as e:
                 logger.error("MCI playback error: %s", e)
             finally:
-                # Clean up temp file
-                with contextlib.suppress(Exception):
-                    os.unlink(file_path)
+                # Clean up temp files
+                for p in cleanup_paths:
+                    with contextlib.suppress(Exception):
+                        os.unlink(p)

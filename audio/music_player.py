@@ -34,6 +34,7 @@ import contextlib
 logger = logging.getLogger(__name__)
 
 CHUNK_SECONDS = 10            # seconds of audio per chunk during playback
+STREAM_BUFFER_SECONDS = 3      # seconds of initial audio pre-buffer for streaming
 TEMP_DIR = Path(tempfile.gettempdir()) / "Raphael" / "temp_music"
 
 
@@ -200,10 +201,16 @@ class MusicPlayer:
             self._music_interrupted.set()
             return f"Jumped to {position_sec:.0f}s."
 
-    def set_volume(self, level: float) -> str:
-        level = max(0.0, min(1.0, level))
-        self._volume = level
-        return f"Volume set to {int(level * 100)}%."
+    def set_volume(self, level: float | str) -> str:
+        try:
+            val = float(level)
+            if val > 1.0:
+                val /= 100.0
+            val = max(0.0, min(1.0, val))
+            self._volume = val
+            return f"Volume set to {int(val * 100)}%."
+        except Exception:
+            return f"Invalid volume level: {level}"
 
     def get_volume(self) -> float:
         return self._volume
@@ -251,8 +258,39 @@ class MusicPlayer:
             self._start_bg_thread()
             return f"Queued {len(entries)} songs. Now playing: {entries[0].title}"
 
+    @staticmethod
+    def _resolve_youtube_info(query: str) -> tuple[str, str, float]:
+        """Fetch exact YouTube video title, artist/channel, and duration_sec for a search query."""
+        try:
+            r = subprocess.run(
+                [
+                    "yt-dlp",
+                    "--print", "%(title)s|||%(uploader)s|||%(duration)s",
+                    f"ytsearch1:{query}",
+                    "--no-playlist",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if r.returncode == 0 and "|||" in r.stdout:
+                line = r.stdout.strip().splitlines()[0]
+                if "|||" in line:
+                    parts = line.split("|||")
+                    title = parts[0].strip() if parts[0].strip() else query
+                    artist = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "YouTube"
+                    dur = 0.0
+                    if len(parts) > 2 and parts[2].strip():
+                        with contextlib.suppress(ValueError):
+                            dur = float(parts[2].strip())
+                    return title, artist, dur
+        except Exception:
+            pass
+        return query, "YouTube Stream", 0.0
+
     def stream_song(self, query: str) -> str:
-        """Stream a song directly from YouTube (near-instant start)."""
+        """Stream a song directly from YouTube with exact title and duration resolution."""
+        real_title, real_artist, real_dur = self._resolve_youtube_info(query)
         with self._lock:
             self.stop()
             cmd = [
@@ -268,14 +306,16 @@ class MusicPlayer:
             except FileNotFoundError:
                 return "yt-dlp not found. Please install it."
             entry = SongEntry(
-                title=query,
-                artist="YouTube Stream",
+                title=real_title,
+                artist=real_artist,
+                duration_sec=real_dur,
                 stream_proc=proc,
             )
             self._queue = [entry]
             self._current_index = 0
             self._start_bg_thread()
-            return f"Streaming: {query}"
+            dur_msg = f" ({int(real_dur // 60)}:{int(real_dur % 60):02d})" if real_dur > 0 else ""
+            return f"Streaming: '{real_title}' by {real_artist}{dur_msg}."
 
     def stream_playlist(self, query: str, count: int = 5) -> str:
         """Stream multiple songs in sequence from YouTube search."""
@@ -633,7 +673,7 @@ class MusicPlayer:
             proc.stdout.close()  # type: ignore[union-attr]
 
             # ── Pre-buffer: fill initial buffer before starting playback ──
-            prebuf_frames = int(self.STREAM_BUFFER_SECONDS * 44100)  # type: ignore[attr-defined]
+            prebuf_frames = int(STREAM_BUFFER_SECONDS * 44100)
             prebuf_bytes = bytearray()
             while len(prebuf_bytes) < prebuf_frames * 2:
                 chunk = ffmpeg_proc.stdout.read(CHUNK_FRAMES * 2)  # type: ignore[union-attr]
@@ -645,13 +685,14 @@ class MusicPlayer:
                 accumulated.append(raw.copy())
                 self._playhead_frames += len(raw)
 
-            # Use "medium" latency for glitch-resistant playback
+            # Use float latency (0.1s) for glitch-resistant playback (avoids CFFI string latency crash)
             stream = sd.OutputStream(samplerate=44100, channels=1,
-                                     dtype="float32", latency="medium")
+                                     dtype="float32", latency=0.1)
+            vol = float(self._volume)
             with _AUDIO_LOCK:
                 stream.start()
                 if prebuf_bytes:
-                    stream.write(raw * self._volume)
+                    stream.write((raw * vol).astype(np.float32))
 
             try:
                 while True:
@@ -674,7 +715,7 @@ class MusicPlayer:
 
                     self._playhead_frames += len(raw)
                     # Write outside _AUDIO_LOCK — dedicated OutputStream won't conflict
-                    stream.write(raw * self._volume)
+                    stream.write((raw * vol).astype(np.float32))
             finally:
                 with _AUDIO_LOCK:
                     stream.stop()

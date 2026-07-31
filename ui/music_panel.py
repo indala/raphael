@@ -282,6 +282,17 @@ class MusicPanel(QWidget):
     def _on_volume_changed(self, val: int):
         with contextlib.suppress(Exception):
             self._player.set_volume(val / 100.0)
+            from orchestrator.tools.native.system import set_system_volume
+            set_system_volume(val)
+
+    def update_system_volume(self, spk_vol: int):
+        """Sync music player volume & UI slider when Windows master speaker volume changes."""
+        with contextlib.suppress(Exception):
+            self._player.set_volume(spk_vol / 100.0)
+            if not self._vol_slider.isSliderDown():
+                self._vol_slider.blockSignals(True)
+                self._vol_slider.setValue(spk_vol)
+                self._vol_slider.blockSignals(False)
 
     def refresh(self):
         """Public entry for external refresh trigger."""

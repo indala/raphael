@@ -165,6 +165,8 @@ class WinRTBackend(STTBackend):
                     if text and self._running:
                         logger.info("WinRT heard: \"%s\"", text[:80])
                         on_partial(text, True)
+                else:
+                    logger.debug("WinRT result status: %s", result.status)
             except Exception as e:
                 logger.warning("WinRT result callback error: %s", e)
 
@@ -229,7 +231,15 @@ class WinRTBackend(STTBackend):
                 _restart_delay = min(_restart_delay * 2, 30.0)
 
         def on_completed(sender, args):
-            """Session ended — restart if still running."""
+            """Session ended — log status and restart if still running."""
+            # Log the completion reason to diagnose short sessions
+            status_code = getattr(args, "status", None)
+            status_name = getattr(status_code, "name", str(status_code)) if status_code is not None else "unknown"
+            duration = time.time() - _session_start_time
+            logger.warning(
+                "WinRT session ended (%.2fs) — status: %s",
+                duration, status_name,
+            )
             if self._running and self._loop and self._loop.is_running():
                 with contextlib.suppress(RuntimeError):
                     asyncio.run_coroutine_threadsafe(restart_session(), self._loop)

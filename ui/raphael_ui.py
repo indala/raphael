@@ -70,6 +70,9 @@ class RaphaelUI:
     def set_tts_enabled(self, enabled: bool):
         self._window.set_tts_enabled(enabled)
 
+    def set_processing(self, processing: bool):
+        self._window.set_processing(processing)
+
     def set_audio_state(self, mic_vol: int, spk_vol: int, spk_muted: bool):
         """Update volume indicator labels from system audio state."""
         self._window.set_audio_state(mic_vol, spk_vol, spk_muted)

@@ -157,7 +157,6 @@ def apply_update(installer_path: Path) -> None:
     logger.info("Starting silent upgrade from %s ...", installer_path)
     subprocess.Popen(
         [str(installer_path), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-        shell=True,
     )
     os._exit(0)
 

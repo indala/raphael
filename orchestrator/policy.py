@@ -61,6 +61,9 @@ def evaluate_tool_call(tool_name: str, args: dict[str, Any] | None = None) -> Po
     if tool_name == "run_command":
         return _evaluate_command(str(args.get("command", "")))
 
+    if tool_name == "launch_app":
+        return _evaluate_launch(str(args.get("app_name", "")))
+
     # Everything else is auto-allowed
     return PolicyDecision(True, "auto_allowed")
 
@@ -70,6 +73,14 @@ def permission_message(_tool_name: str, decision: PolicyDecision) -> str:
     if decision.blocked:
         return f"Blocked for safety: {decision.reason}"
     return "Allowed."
+
+
+def _evaluate_launch(app_name: str) -> PolicyDecision:
+    if not app_name.strip():
+        return PolicyDecision(False, "blocked", "empty app name")
+    if re.search(r'[;|&`$(){}]', app_name):
+        return PolicyDecision(False, "blocked", "app name contains shell metacharacters")
+    return PolicyDecision(True, "safe")
 
 
 def _evaluate_command(command: str) -> PolicyDecision:

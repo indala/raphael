@@ -24,11 +24,11 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "play_song",
-                "description": "Play a song — searches local music library first, then downloads from YouTube if not found locally. The song plays through Raphael's speakers.",
+                "description": "Play a specific single song track — searches local library first, downloads if missing. For generic or instant playback, use stream_song.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "song_name": {"type": "string", "description": "Song name or search query (e.g., 'Shape of You', 'Adele Hello')"},
+                        "song_name": {"type": "string", "description": "Specific single track name or artist (e.g., 'Alan Walker Faded', 'Adele Hello'). Do not use for multi-hour compilation titles."},
                     },
                     "required": ["song_name"],
                 },
@@ -183,8 +183,8 @@ def get_schemas() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "set_volume",
-                "description": "Set the music playback volume.",
+                "name": "set_music_volume",
+                "description": "Set the music player internal playback volume (not system volume).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -197,8 +197,8 @@ def get_schemas() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "get_volume",
-                "description": "Get the current music playback volume level.",
+                "name": "get_music_volume",
+                "description": "Get the current music player internal playback volume level (not system volume).",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -262,6 +262,14 @@ def get_schemas() -> list[dict]:
             "function": {
                 "name": "scan_local_library",
                 "description": "Scan the local music library folder for all audio files and return a list of found songs.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_local_songs",
+                "description": "List all local audio files in the music library.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -455,13 +463,13 @@ def seek_music(position_seconds: int) -> str:
     return str(_player().seek(float(position_seconds)))
 
 
-def set_volume(level: float) -> str:
+def set_music_volume(level: float) -> str:
     return str(_player().set_volume(level))
 
 
-def get_volume() -> str:
+def get_music_volume() -> str:
     v = _player().get_volume()
-    return f"Current volume: {int(v * 100)}%."
+    return f"Current music player volume: {int(v * 100)}%."
 
 
 def set_repeat_mode(mode: str) -> str:
@@ -518,6 +526,11 @@ def scan_local_library() -> str:
         artist = f" - {s.artist}" if s.artist and s.artist != "Unknown" else ""
         lines.append(f"{i}. {s.title}{artist}")
     return "\n".join(lines)
+
+
+def list_local_songs() -> str:
+    """List all local audio files in the music library (alias for scan_local_library)."""
+    return scan_local_library()
 
 
 def add_to_library(song_name: str) -> str:

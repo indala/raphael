@@ -42,7 +42,7 @@ def launch(app_name_or_path: str) -> str:
         # Try as a command or Windows app alias
         if _CS_SHELL and CsShell.Launch(app_name_or_path):
             return f"Launched: {app_name_or_path}"
-        subprocess.Popen(app_name_or_path, shell=True)
+        subprocess.Popen([app_name_or_path])
         return f"Launched: {app_name_or_path}"
 
     except Exception as e:

@@ -189,7 +189,7 @@ import contextlib
 # ── Text Sanitization ───────────────────────────────────────────────────
 
 def _clean_text_for_tts(text: str) -> str:
-    """Remove emojis, markdown bold/italic, backticks, and extra spacing."""
+    """Remove markdown, emojis, code fences, links, and extra spacing."""
     if not text:
         return ""
 
@@ -208,10 +208,25 @@ def _clean_text_for_tts(text: str) -> str:
         cleaned.append(ch)
     text = ''.join(cleaned)
 
-    # 2. Strip formatting markup
-    text = re.sub(r'\*+', '', text)
+    # 2. Remove code fences (```...``` and ````...````)
+    text = re.sub(r'`{3,}[\s\S]*?`{3,}', '', text)
+    # 3. Inline code backticks
     text = re.sub(r'`+', '', text)
-    # 3. Collapse multiple whitespaces
+    # 4. Markdown links [text](url) → text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # 5. Heading markers (###, ##, #) at line start
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    # 6. Bold/italic markers
+    text = re.sub(r'\*{1,3}', '', text)
+    text = re.sub(r'_{1,3}', '', text)
+    # 7. List markers (-, *, +, 1.) at line start with optional indent
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # 8. Blockquote markers
+    text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)
+    # 9. Horizontal rules
+    text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # 10. Collapse multiple whitespaces and trim
     return re.sub(r'\s+', ' ', text).strip()
 
 

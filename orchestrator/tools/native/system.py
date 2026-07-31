@@ -86,6 +86,34 @@ def get_schemas() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "get_system_volume",
+                "description": "Get the current Windows system master volume level (0-100)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "set_system_volume",
+                "description": "Set the Windows system master volume level",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "level": {
+                            "type": "integer",
+                            "description": "Volume level from 0 to 100",
+                        }
+                    },
+                    "required": ["level"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "get_agent_performance",
                 "description": "Get agent performance metrics (call count, success rate, latency). Shows stats for all agents or a specific one.",
                 "parameters": {
@@ -303,11 +331,15 @@ def _search_app_path(app_name: str) -> str | None:
             for f_path in root.rglob(f"{name_lower}.lnk"):
                 # Shortcut found — try to resolve target via PowerShell
                 try:
+                    safe_path = str(f_path).replace("'", "''")
                     ps_cmd = (
-                        f"powershell -Command \"(New-Object -COM WScript.Shell)."
-                        f"CreateShortcut('{f_path}').TargetPath\""
+                        f"(New-Object -COM WScript.Shell)."
+                        f"CreateShortcut('{safe_path}').TargetPath"
                     )
-                    result = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5, shell=True)
+                    result = subprocess.run(
+                        ["powershell", "-NoProfile", "-Command", ps_cmd],
+                        capture_output=True, text=True, timeout=5,
+                    )
                     if result.returncode == 0:
                         target = result.stdout.strip()
                         if target and target.lower().endswith(".exe"):
@@ -370,14 +402,14 @@ def launch_app(app_name: str) -> str:
             if _CS_SHELL:
                 CsShell.Launch(app_path)
             else:
-                subprocess.Popen(app_path, shell=True)
+                subprocess.Popen([app_path])
             return f"Launched {app_name}."
         else:
             # Last resort — try as direct command
             if _CS_SHELL:
                 CsShell.Launch(app_name)
             else:
-                subprocess.Popen(app_name, shell=True)
+                subprocess.Popen([app_name])
             return f"Attempted to launch {app_name}."
     except Exception as e:
         return f"Failed to launch {app_name}: {e}"
@@ -392,8 +424,12 @@ def open_url(url: str) -> str:
 def run_command(command: str) -> str:
     """Run a system command with timeout and process tree cleanup."""
     try:
+        import shlex as _shlex
+        cmd_args = _shlex.split(command)
+        if not cmd_args:
+            return "Empty command."
         proc = subprocess.Popen(
-            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         try:
             stdout, stderr = proc.communicate(timeout=25)
@@ -401,9 +437,41 @@ def run_command(command: str) -> str:
             return output[:2000] if output else "Command completed with no output."
         except subprocess.TimeoutExpired:
             if os.name == "nt":
-                subprocess.run(f"taskkill /F /T /PID {proc.pid}", shell=True, capture_output=True)
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
             else:
                 proc.kill()
             return "Command timed out after 25 seconds."
     except Exception as e:
         return f"Command failed: {e}"
+
+
+def get_system_volume() -> str:
+    """Get Windows system master volume level via pycaw."""
+    try:
+        from pycaw.pycaw import AudioUtilities
+
+        devices = AudioUtilities.GetSpeakers()
+        volume = devices.EndpointVolume
+        scalar = volume.GetMasterVolumeLevelScalar()  # 0.0–1.0
+        pct = round(scalar * 100)
+        return f"System volume: {pct}%"
+    except ImportError:
+        return "pycaw not available — cannot read system volume"
+    except Exception as e:
+        return f"Failed to read system volume: {e}"
+
+
+def set_system_volume(level: int) -> str:
+    """Set Windows system master volume level via pycaw (0–100)."""
+    level = max(0, min(100, level))
+    try:
+        from pycaw.pycaw import AudioUtilities
+
+        devices = AudioUtilities.GetSpeakers()
+        volume = devices.EndpointVolume
+        volume.SetMasterVolumeLevelScalar(level / 100.0, None)
+        return f"System volume set to {level}%"
+    except ImportError:
+        return "pycaw not available — cannot set system volume"
+    except Exception as e:
+        return f"Failed to set system volume: {e}"

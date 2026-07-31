@@ -94,7 +94,7 @@ def test_tool_executor_has_expected_tools():
         "add_to_queue", "clear_queue", "show_queue",
         "pause_music", "resume_music", "stop_music",
         "next_song", "previous_song", "seek_music",
-        "set_volume", "get_volume",
+        "set_music_volume", "get_music_volume",
         "set_repeat_mode", "set_shuffle",
         "get_current_song", "get_playback_status", "get_playback_progress",
         "show_recently_played",

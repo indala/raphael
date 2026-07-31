@@ -641,7 +641,7 @@ class ToolExecutor:
         "get_market_quote": 120,      # 2 min
         "get_portfolio_summary": 120, # 2 min
         "read_clipboard": 5,          # 5 sec (just debounce)
-        "get_volume": 10,             # 10 sec
+        "get_music_volume": 10,       # 10 sec
         "get_playback_status": 10,    # 10 sec
         "get_current_song": 10,       # 10 sec
         "get_mouse_position": 2,      # 2 sec (stale position is useless)
@@ -815,6 +815,8 @@ class RaphaelOrchestrator:
         self.executor = ToolExecutor()
         self.tool_schemas = get_tool_schemas()
         self._extra_tool_schemas: list[dict] = []  # injected at runtime
+        from orchestrator.tool_orchestrator import ToolOrchestrator
+        self.tool_orchestrator = ToolOrchestrator()
         self.history: list[dict] = []
         # UI callback — set by RaphaelController after construction
         self._ui_log: Callable | None = None
@@ -951,18 +953,10 @@ class RaphaelOrchestrator:
         return base
 
     def _get_domain_schemas(self, user_input: str) -> list[dict]:
-        """Return tool schemas filtered to the detected domain.
-
-        Uses query routing to determine the sub-agent domain (e.g. desktop,
-        coding, research) and returns only the schemas for tools allowed
-        in that domain. Falls back to all schemas for 'general' queries.
-        """
-        allowed = get_tools_for_query(user_input)
-        if allowed is None:
-            return self._all_tool_schemas
-        schemas = get_filtered_schemas(list(allowed))
-        schemas.extend(self._extra_tool_schemas)
-        return schemas
+        """Return tool schemas dynamically filtered by ToolOrchestrator."""
+        return self.tool_orchestrator.get_filtered_schemas(
+            user_input, extra_schemas=self._extra_tool_schemas
+        )
 
     def update_tools(self, new_schemas: list[dict], validate: bool = True) -> list[str]:
         """Inject or replace tool schemas at runtime.

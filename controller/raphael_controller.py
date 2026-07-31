@@ -71,6 +71,7 @@ class RaphaelSignals(QObject):
     response_token = pyqtSignal(str)  # streaming token
     error_occurred = pyqtSignal(str)
     processing_done = pyqtSignal()
+    processing_state_changed = pyqtSignal(bool)
     reset_watchdog = pyqtSignal()
     task_status_changed = pyqtSignal(dict)
     task_finished = pyqtSignal(dict)
@@ -126,6 +127,7 @@ class RaphaelController(QObject):
         self.signals.response_token.connect(self._on_stream_token)
         self.signals.error_occurred.connect(self._show_error)
         self.signals.processing_done.connect(self._done)
+        self.signals.processing_state_changed.connect(lambda val: self.ui.set_processing(val))
         self.signals.reset_watchdog.connect(self._reset_watchdog_timer)
         self.signals.task_status_changed.connect(self._handle_task_status_changed_gui)
         self.signals.task_finished.connect(self._handle_task_finished_gui)
@@ -304,6 +306,7 @@ class RaphaelController(QObject):
     def _set_processing(self, value: bool) -> None:
         """Set the processing state."""
         self._processing = value
+        self.signals.processing_state_changed.emit(value)
 
     def _on_task_status_changed_event(self, event: str, data: dict):
         self.signals.task_status_changed.emit(data)

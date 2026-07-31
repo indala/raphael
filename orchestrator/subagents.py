@@ -117,15 +117,21 @@ def route_query(query: str) -> str:
 
 
 def get_tools_for_query(query: str) -> tuple[str, ...] | None:
-    """Return the allowed_tools for the domain that best matches the query.
+    """Return allowed tools for the domain that best matches the query via ToolOrchestrator.
 
-    Returns None for 'general' (no filtering — use all tools).
+    Returns None for 'general' (no filtering — use fallback core tools).
     """
-    domain = route_query(query)
-    if domain == "general":
+    from orchestrator.tool_orchestrator import ToolOrchestrator, ToolDomain
+    orch = ToolOrchestrator()
+    domains = orch.classify_query(query)
+    if ToolDomain.GENERAL in domains:
         return None
-    profile = STANDARD_SUBAGENTS.get(domain)
-    return profile.allowed_tools if profile else None
+    allowed: set[str] = set()
+    for d in domains:
+        profile = STANDARD_SUBAGENTS.get(d.value)
+        if profile:
+            allowed.update(profile.allowed_tools)
+    return tuple(allowed) if allowed else None
 
 
 STANDARD_SUBAGENTS: dict[str, SubAgentProfile] = {
@@ -298,7 +304,7 @@ STANDARD_SUBAGENTS: dict[str, SubAgentProfile] = {
         allowed_tools=(
             "play_song", "pause_music", "resume_music", "stop_music",
             "next_song", "previous_song", "seek_music",
-            "set_volume", "get_volume",
+            "set_music_volume", "get_music_volume",
             "set_repeat_mode", "set_shuffle",
             "get_current_song", "get_playback_status", "get_playback_progress",
             "show_recently_played",

@@ -1,0 +1,279 @@
+"""
+ToolOrchestrator — Intelligent tool routing, domain categorization, schema filtering,
+and health tracking for Raphael.
+
+Prevents prompt bloat and LLM confusion by injecting only relevant tool schemas
+for a given user query while maintaining a fallback core set.
+"""
+
+import enum
+import logging
+import re
+import time
+from typing import Any, Callable, Dict, List, Set, Tuple
+
+from orchestrator.tools import (
+    PARALLEL_SAFE_TOOLS,
+    get_filtered_schemas,
+    get_tool_map,
+    get_tool_schemas,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class ToolDomain(str, enum.Enum):
+    AUDIO = "audio"
+    MUSIC = "music"
+    FILES = "files"
+    DESKTOP = "desktop"
+    WEB = "web"
+    MEMORY = "memory"
+    TRADING = "trading"
+    AGENTS = "agents"
+    MCP = "mcp"
+    GENERAL = "general"
+
+
+# Tool mapping per domain
+DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
+    ToolDomain.AUDIO: (
+        "set_system_volume",
+        "get_system_volume",
+        "set_system_mute",
+        "get_system_mute",
+        "check_tool_health",
+    ),
+    ToolDomain.MUSIC: (
+        "play_song",
+        "stream_song",
+        "add_to_library",
+        "save_song_to_library",
+        "pause_music",
+        "resume_music",
+        "stop_music",
+        "list_local_songs",
+        "list_playlists",
+        "play_playlist",
+        "create_playlist",
+        "get_current_song",
+        "set_volume",
+        "get_volume",
+    ),
+    ToolDomain.FILES: (
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_directory",
+        "process_file",
+        "analyze_image",
+        "read_clipboard",
+        "copy_to_clipboard",
+        "copy_image_to_clipboard",
+    ),
+    ToolDomain.DESKTOP: (
+        "desktop_snapshot_v2",
+        "desktop_taskbar",
+        "desktop_tray",
+        "desktop_processes",
+        "desktop_system_info",
+        "desktop_network",
+        "desktop_environment",
+        "ui_click",
+        "ui_type_text",
+        "ui_press_key",
+        "ui_hotkey",
+        "ui_focus_window",
+        "ui_enum_windows",
+        "ui_close_window",
+    ),
+    ToolDomain.WEB: (
+        "web_search",
+        "web_fetch",
+        "web_fetch_multi",
+        "open_url",
+        "get_weather",
+        "browser_control",
+    ),
+    ToolDomain.MEMORY: (
+        "recall_memory",
+        "save_memory",
+        "list_memories",
+        "create_goal",
+        "list_goals",
+        "update_goal",
+        "archive_goal",
+        "read_knowledge_file",
+        "list_knowledge_files",
+    ),
+    ToolDomain.TRADING: (
+        "list_stocks",
+        "get_stock_data",
+        "place_order",
+        "get_positions",
+    ),
+    ToolDomain.AGENTS: (
+        "spawn_agent",
+        "list_agents",
+        "delegate_to_agent",
+        "get_agent_performance",
+        "run_in_background",
+    ),
+}
+
+# Domain keyword patterns for fast intent matching
+DOMAIN_PATTERNS: Dict[ToolDomain, re.Pattern] = {
+    ToolDomain.AUDIO: re.compile(
+        r"\b(volume|sound|speaker|audio|mute|unmute|louder|quieter|db)\b", re.IGNORECASE
+    ),
+    ToolDomain.MUSIC: re.compile(
+        r"\b(music|song|playlist|play|stream|track|album|artist|lofi|youtube|library|download|save song|listen)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.FILES: re.compile(
+        r"\b(file|folder|dir|directory|read|write|edit|create file|delete file|path|txt|json|code|csv|clipboard)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.DESKTOP: re.compile(
+        r"\b(window|click|type|keypress|screenshot|taskbar|tray|process|app|open app|close window|monitor|screen)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.WEB: re.compile(
+        r"\b(search|find online|browse|website|url|http|weather|forecast|google|fetch|web)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.MEMORY: re.compile(
+        r"\b(remember|memory|recall|forget|goal|target|knowledge|note)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.TRADING: re.compile(
+        r"\b(stock|share|upstox|price|market|trade|buy|sell|portfolio|nifty|sensex)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.AGENTS: re.compile(
+        r"\b(agent|subagent|delegate|spawn|background task|performance|worker)\b",
+        re.IGNORECASE,
+    ),
+}
+
+# Curated core tools for general queries when domain is broad/ambiguous
+CORE_FALLBACK_TOOLS: Tuple[str, ...] = (
+    "web_search",
+    "web_fetch",
+    "read_file",
+    "edit_file",
+    "write_file",
+    "recall_memory",
+    "save_memory",
+    "set_system_volume",
+    "get_system_volume",
+    "play_song",
+    "desktop_snapshot_v2",
+    "spawn_agent",
+)
+
+
+class ToolOrchestrator:
+    """Manages tool routing, intent classification, schema filtering, and execution health."""
+
+    def __init__(self):
+        self._metrics: Dict[str, Dict[str, Any]] = {}
+
+    def classify_query(self, query: str) -> Set[ToolDomain]:
+        """Classify user query into matching tool domains using keyword patterns."""
+        if not query or not query.strip():
+            return {ToolDomain.GENERAL}
+
+        matched: Set[ToolDomain] = set()
+        for domain, pattern in DOMAIN_PATTERNS.items():
+            if pattern.search(query):
+                matched.add(domain)
+
+        return matched if matched else {ToolDomain.GENERAL}
+
+    def get_filtered_schemas(
+        self, query: str, extra_schemas: List[Dict[str, Any]] | None = None
+    ) -> List[Dict[str, Any]]:
+        """Return tool schemas filtered to matching query domains.
+
+        Reduces prompt size from 60+ schemas to ~5-15 relevant schemas.
+        """
+        domains = self.classify_query(query)
+        tool_names: Set[str] = set()
+
+        if ToolDomain.GENERAL in domains or len(domains) > 4:
+            # Broad query — use curated core fallback tools
+            tool_names.update(CORE_FALLBACK_TOOLS)
+        else:
+            for d in domains:
+                tool_names.update(DOMAIN_TOOL_MAP.get(d, ()))
+
+        # Also include all active MCP tool names if MCP tools exist
+        all_schemas = get_tool_schemas()
+        mcp_names = {
+            s["function"]["name"]
+            for s in all_schemas
+            if s["function"]["name"].startswith("mcp_")
+        }
+        tool_names.update(mcp_names)
+
+        # Retrieve filtered schemas
+        filtered = get_filtered_schemas(list(tool_names))
+
+        # Add any dynamically injected runtime schemas
+        if extra_schemas:
+            existing_names = {s["function"]["name"] for s in filtered}
+            for extra in extra_schemas:
+                if extra.get("function", {}).get("name") not in existing_names:
+                    filtered.append(extra)
+
+        logger.debug(
+            "ToolOrchestrator: domains=%s -> %d tool schema(s) selected (out of %d)",
+            [d.value for d in domains],
+            len(filtered),
+            len(all_schemas),
+        )
+
+        return filtered
+
+    def is_parallel_safe(self, tool_name: str) -> bool:
+        """Check if a tool is read-only and safe for parallel execution."""
+        return tool_name in PARALLEL_SAFE_TOOLS
+
+    def track_tool_execution(
+        self, tool_name: str, success: bool, duration_ms: float, error: str = ""
+    ) -> None:
+        """Track runtime health metrics for tool execution."""
+        if tool_name not in self._metrics:
+            self._metrics[tool_name] = {
+                "calls": 0,
+                "successes": 0,
+                "failures": 0,
+                "total_duration_ms": 0.0,
+                "last_error": "",
+                "last_called_at": 0.0,
+            }
+
+        m = self._metrics[tool_name]
+        m["calls"] += 1
+        if success:
+            m["successes"] += 1
+        else:
+            m["failures"] += 1
+            m["last_error"] = error
+
+        m["total_duration_ms"] += duration_ms
+        m["last_called_at"] = time.time()
+
+    def get_tool_health_report(self) -> Dict[str, Dict[str, Any]]:
+        """Return snapshot of tool execution metrics."""
+        report = {}
+        for name, m in self._metrics.items():
+            calls = m["calls"]
+            report[name] = {
+                "calls": calls,
+                "success_rate": (m["successes"] / calls) * 100 if calls > 0 else 0.0,
+                "avg_latency_ms": (m["total_duration_ms"] / calls) if calls > 0 else 0.0,
+                "last_error": m["last_error"],
+            }
+        return report
