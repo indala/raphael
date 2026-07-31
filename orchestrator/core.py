@@ -817,6 +817,10 @@ class RaphaelOrchestrator:
         self._extra_tool_schemas: list[dict] = []  # injected at runtime
         from orchestrator.tool_orchestrator import ToolOrchestrator
         self.tool_orchestrator = ToolOrchestrator()
+        # Boot-time integrity check: verifies every prompt/map-referenced tool
+        # is registered and flags weak descriptions. Logs warnings only.
+        from orchestrator.tool_audit import run_boot_audit
+        run_boot_audit()
         self.history: list[dict] = []
         # UI callback — set by RaphaelController after construction
         self._ui_log: Callable | None = None
@@ -1036,15 +1040,37 @@ class RaphaelOrchestrator:
 
             messages = [
                 {"role": "system", "content": proactive_content},
+            ]
+
+            # Include recent conversation so the check knows what was just
+            # discussed and doesn't repeat it.
+            recent_context = []
+            budget = 1500
+            for m in self.history[-6:]:
+                content = m.get("content")
+                if not isinstance(content, str) or m["role"] not in ("user", "assistant"):
+                    continue
+                if len(content) > 300:
+                    content = content[:300] + "..."
+                remaining = budget - sum(len(x["content"]) for x in recent_context)
+                if remaining <= 0:
+                    break
+                recent_context.append({"role": m["role"], "content": content})
+            if recent_context:
+                messages.extend(recent_context)
+
+            messages.append(
                 {
                     "role": "user",
                     "content": (
-                        "The user has been idle. If you have something relevant to say "
-                        "based on the context, respond in 1-2 sentences. "
-                        "Otherwise respond with '__noop__'."
+                        "The user has been idle. Based on the recent conversation above, "
+                        "only speak up if you have something genuinely new, useful, and "
+                        "not already said or offered. Do NOT repeat offers or information "
+                        "the assistant already provided. Otherwise respond with exactly "
+                        "'__noop__' to stay silent."
                     ),
                 },
-            ]
+            )
 
             # Single LLM call with NO tools
             response = self.llm.chat(messages, [], reason="proactive_check")

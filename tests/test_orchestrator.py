@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 121
+    assert len(executor.tool_map) == 124
 
 
 def test_tool_executor_has_expected_tools():
@@ -28,6 +28,8 @@ def test_tool_executor_has_expected_tools():
         "copy_to_clipboard", "read_clipboard", "launch_app", "open_url",
         "speak", "generate_chart", "run_command",
         "recall_memory", "save_memory", "web_search", "process_file", "browser_control",
+        # System volume
+        "set_system_volume", "get_system_volume",
         "ui_click", "ui_type_text", "ui_press_key", "ui_hotkey",
         "ui_focus_window", "ui_get_mouse_position", "capture_screen",
         "copy_image_to_clipboard", "get_weather", "analyze_image",
@@ -89,6 +91,7 @@ def test_tool_executor_has_expected_tools():
         "web_fetch_multi",
         # Music Player
         "add_to_library", "remove_from_library", "scan_local_library",
+        "list_local_songs",
         "play_playlist",
         "stream_song", "stream_playlist", "search_online",
         "add_to_queue", "clear_queue", "show_queue",

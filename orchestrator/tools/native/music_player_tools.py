@@ -392,19 +392,57 @@ def play_song(song_name: str) -> str:
     return str(_player().play_song(song_name))
 
 
+def _match_local_song_file(title: str, local_files: list) -> object | None:
+    """Find the downloaded file for a saved playlist song, if any.
+
+    yt-dlp writes ``<title>_<videoID>.mp3``, so compare significant words
+    rather than raw substrings (the title may use spaces/separators).
+    """
+    title_words = {w for w in title.lower().replace("_", " ").replace("-", " ").split()}
+    if not title_words:
+        return None
+    for fp in local_files:
+        stem_words = set(fp.stem.lower().replace("_", " ").replace("-", " ").split())
+        if title_words.issubset(stem_words):
+            return fp
+    # Loose fallback: any shared word still beats re-streaming.
+    for fp in local_files:
+        stem_words = set(fp.stem.lower().replace("_", " ").replace("-", " ").split())
+        if title_words.intersection(stem_words):
+            return fp
+    return None
+
+
 def play_playlist(playlist_name: str, shuffle: bool = False) -> str:
     songs = PlaylistManager.get(playlist_name)
+    is_persistent = False
     if not songs:
-        return f"Playlist '{playlist_name}' is empty or not found."
+        songs = PlaylistManager.get_persistent(playlist_name)
+        is_persistent = bool(songs)
+        if not songs:
+            return f"Playlist '{playlist_name}' is empty or not found."
     p = _player()
     p.stop()
-    entries = [SongEntry(title=s.get("title", "Unknown"), artist=s.get("artist", ""))
-               for s in songs]
+    if is_persistent:
+        # Saved playlists download songs to DATA_DIR/music/<name>/ for offline
+        # playback; prefer those local files over re-streaming from YouTube.
+        from pathlib import Path
+        import config
+        playlist_dir = Path(getattr(config, "DATA_DIR", ".")) / "music" / playlist_name
+        local = list(playlist_dir.glob("*")) if playlist_dir.exists() else []
+        entries = [SongEntry(title=s.get("title", "Unknown"), artist=s.get("artist", ""),
+                             filepath=_match_local_song_file(s.get("title", ""), local))
+                   for s in songs]
+    else:
+        entries = [SongEntry(title=s.get("title", "Unknown"), artist=s.get("artist", ""))
+                   for s in songs]
     p._queue = entries
     p._current_index = 0
     p.set_shuffle(shuffle)
     p._start_bg_thread()
-    return f"Playing playlist '{playlist_name}' ({len(entries)} songs) — streaming from YouTube."
+    label = "saved" if is_persistent else "temporary"
+    offline = " (local files)" if is_persistent and any(e.filepath for e in entries) else ""
+    return f"Playing {label} playlist '{playlist_name}' ({len(entries)} songs){offline}."
 
 
 def stream_song(query: str) -> str:
@@ -554,13 +592,16 @@ def delete_playlist(name: str) -> str:
 
 
 def list_playlists() -> str:
-    pl = PlaylistManager.list_playlists()
-    if not pl:
+    temp = PlaylistManager.list_playlists()
+    persistent = set(PlaylistManager.list_persistent())
+    names = temp + sorted(persistent - set(temp))
+    if not names:
         return "No playlists saved yet."
     lines = ["Playlists:"]
-    for i, name in enumerate(pl, 1):
-        songs = PlaylistManager.get(name)
-        lines.append(f"{i}. {name} ({len(songs)} songs)")
+    for i, name in enumerate(names, 1):
+        marker = " (saved)" if name in persistent else ""
+        songs = PlaylistManager.get(name) or PlaylistManager.get_persistent(name)
+        lines.append(f"{i}. {name}{marker} ({len(songs)} songs)")
     return "\n".join(lines)
 
 

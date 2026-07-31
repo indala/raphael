@@ -20,6 +20,77 @@ logger = logging.getLogger(__name__)
 class SystemPromptBuilder:
     """Builds composable system prompts for Raphael LLM calls."""
 
+    # Curated tool guide (label → tool names). Only names registered in the
+    # tool registry are emitted; unregistered names are dropped with a warning.
+    _TOOL_GUIDE = (
+        ("Memory", ("save_memory", "recall_memory")),
+        ("Search", ("web_search", "web_fetch", "search_online")),
+        (
+            "System & Volume",
+            ("set_system_volume", "get_system_volume"),
+        ),
+        (
+            "Music & Library",
+            (
+                "play_song",
+                "stream_song",
+                "save_song",
+                "pause_music",
+                "resume_music",
+                "stop_music",
+                "list_local_songs",
+                "play_playlist",
+                "create_playlist",
+                "stream_playlist",
+            ),
+        ),
+        (
+            "Files",
+            ("edit_file", "write_file", "read_file", "process_file", "save_output"),
+        ),
+        ("Email", ("read_inbox", "search_emails", "send_email")),
+        ("Vision", ("analyze_image",)),
+        ("Browser", ("browser_control",)),
+        (
+            "Desktop UI",
+            (
+                "ui_click",
+                "ui_type_text",
+                "ui_press_key",
+                "ui_hotkey",
+                "ui_focus_window",
+                "ui_enum_windows",
+                "ui_close_window",
+            ),
+        ),
+        (
+            "Desktop State",
+            (
+                "desktop_snapshot_v2",
+                "desktop_taskbar",
+                "desktop_tray",
+                "desktop_processes",
+                "desktop_system_info",
+                "desktop_network",
+                "desktop_environment",
+                "launch_app",
+                "run_command",
+            ),
+        ),
+        (
+            "Agents & Tasks",
+            (
+                "spawn_agent",
+                "delegate_to_agent",
+                "delegate_background",
+                "check_task",
+                "list_tasks",
+                "list_agents",
+            ),
+        ),
+        ("Background", ("run_in_background",)),
+    )
+
     @staticmethod
     @staticmethod
     def build(
@@ -116,16 +187,8 @@ class SystemPromptBuilder:
     def _build_tool_policies_section() -> str:
         return (
             "=== TOOL POLICIES ===\n"
-            "• Memory → save_memory / recall_memory\n"
-            "• Search → web_search\n"
-            "• System & Volume → set_system_volume (sets master Windows speaker volume 0-100), get_system_volume, set_system_mute\n"
-            "• Music & Library → add_to_library / save_song_to_library (downloads and saves songs from YouTube directly to local library), play_song (plays local or downloads), stream_song (instant YouTube streaming), pause_music, resume_music, stop_music, list_local_songs, play_playlist, create_playlist\n"
-            "• Files → edit_file (preferred for edits), write_file (new files), read_file, process_file\n"
-            "• Vision → analyze_image\n"
-            "• Browser → browser_control (navigate, click, fill, scroll)\n"
-            "• Desktop UI → ui_click, ui_type_text, ui_press_key, ui_hotkey, ui_focus_window, ui_enum_windows, ui_close_window\n"
-            "• Desktop State → desktop_snapshot_v2 (comprehensive), desktop_taskbar, desktop_tray, desktop_processes, desktop_system_info, desktop_network, desktop_environment\n"
-            "• Background → run_in_background for ops >3s\n\n"
+            + SystemPromptBuilder._build_tool_guide()
+            + "\n"
             "CODE: Use edit_file with old→new replacement for targeted edits. Use write_file for new files. "
             "Always read_file before editing.\n\n"
             "WINDOWS: Always desktop_snapshot_v2 or ui_enum_windows before acting on windows. "
@@ -143,6 +206,24 @@ class SystemPromptBuilder:
             "Always state the EXACT song title and artist being played in your response.\n\n"
             "If user asks NOT to use a tool, respect it and use alternatives."
         )
+
+    @staticmethod
+    def _build_tool_guide() -> str:
+        """Build the tool bullet list from _TOOL_GUIDE, dropping any name that is
+        not actually registered so the prompt can never reference phantom tools."""
+        from orchestrator.tools import get_tool_map
+
+        registered = get_tool_map()
+        lines = []
+        for label, names in SystemPromptBuilder._TOOL_GUIDE:
+            existing = [n for n in names if n in registered]
+            for dropped in [n for n in names if n not in registered]:
+                logger.warning(
+                    "Tool guide: '%s' is not registered and was omitted from the prompt", dropped
+                )
+            if existing:
+                lines.append(f"• {label} → {', '.join(existing)}")
+        return "\n".join(lines) + "\n"
 
     @staticmethod
     def _build_security_section() -> str:

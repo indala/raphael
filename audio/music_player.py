@@ -38,6 +38,29 @@ STREAM_BUFFER_SECONDS = 3      # seconds of initial audio pre-buffer for streami
 TEMP_DIR = Path(tempfile.gettempdir()) / "Raphael" / "temp_music"
 
 
+def cleanup_temp_files(max_age_days: int = 7) -> int:
+    """Delete temp-downloaded music files older than *max_age_days* days.
+
+    Temp downloads accumulate in ``%TEMP%/Raphael/temp_music/`` and nothing
+    else removes them; anything older than a week is considered stale.
+    Returns the number of files deleted.
+    """
+    if not TEMP_DIR.exists():
+        return 0
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    for fp in TEMP_DIR.iterdir():
+        try:
+            if fp.is_file() and fp.stat().st_mtime < cutoff:
+                fp.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        logger.info("Cleaned up %d stale temp song file(s) from %s", removed, TEMP_DIR)
+    return removed
+
+
 # ── Enums & Data ────────────────────────────────────────────────────────────
 
 
@@ -99,6 +122,7 @@ class MusicPlayer:
         self._lock = threading.RLock()
         self._state_callbacks: list[Callable] = []
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        cleanup_temp_files()
 
     @classmethod
     def get_instance(cls):

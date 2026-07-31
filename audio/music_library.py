@@ -73,6 +73,14 @@ class PlaylistManager:
             return f"Playlist '{name}' not found."
         del data[name]
         _save(data)
+        # Also drop the saved (persistent) copy, if any, so the user can
+        # delete a saved playlist and re-create it under the same name.
+        persistent_path = PlaylistManager._playlist_path(temp=False)
+        persistent_data = _read_json(persistent_path, {})
+        if name in persistent_data:
+            del persistent_data[name]
+            _write_json(persistent_path, persistent_data)
+            return f"Deleted playlist '{name}' (temporary and saved copies)."
         return f"Deleted playlist '{name}'."
 
     @staticmethod
@@ -142,6 +150,9 @@ class PlaylistManager:
         # ── 1. Merge into persistent playlist store ──
         persistent_path = PlaylistManager._playlist_path(temp=False)
         persistent_data = _read_json(persistent_path, {})
+        if name in persistent_data:
+            return (f"Playlist '{name}' is already saved to your library. "
+                    "Delete it first if you want to replace it.")
         persistent_data[name] = songs
         _write_json(persistent_path, persistent_data)
 
@@ -175,6 +186,10 @@ class PlaylistManager:
         result = f"Saved playlist '{name}' ({len(songs)} songs, {downloaded} downloaded)."
         if downloaded < len(songs):
             result += f" {len(songs) - downloaded} failed."
+
+        # ── 3. Drop the now-persisted temp copy to avoid a stale duplicate ──
+        data.pop(name, None)
+        _save(data)
         return result
 
     @staticmethod
@@ -189,6 +204,13 @@ class PlaylistManager:
         """List only persistent playlists (in DATA_DIR)."""
         persistent_path = PlaylistManager._playlist_path(temp=False)
         return list(_read_json(persistent_path, {}).keys())
+
+    @staticmethod
+    def get_persistent(name: str) -> list[dict]:
+        """Get a playlist from the persistent store (DATA_DIR)."""
+        persistent_path = PlaylistManager._playlist_path(temp=False)
+        data = _read_json(persistent_path, {})
+        return data.get(name, [])  # type: ignore[no-any-return]
 
 
 # ── RecentlyPlayed ──────────────────────────────────────────────────────────
