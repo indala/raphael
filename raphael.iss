@@ -75,6 +75,14 @@ Source: "dist\Raphael\_internal\*";       DestDir: "{app}\_internal"; Flags: ign
 
 ; App icon (for shortcuts)
 Source: "assets\icon.ico";                DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\ffmpeg.exe";                DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\avcodec-63.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\avdevice-63.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\avfilter-12.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\avformat-63.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\avutil-61.dll";             DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\swresample-7.dll";          DestDir: "{app}"; Flags: ignoreversion
+Source: "bin\swscale-10.dll";            DestDir: "{app}"; Flags: ignoreversion
 
 ; ── Start Menu + Desktop shortcuts ─────────────────────────────────────
 [Icons]

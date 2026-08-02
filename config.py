@@ -72,7 +72,7 @@ STT_WAKE_WORDS = os.getenv("STT_WAKE_WORDS", "hey raphael,raphael,hey rafael,raf
 STT_MUTED = False
 STT_AUDIO_INPUT_AVAILABLE = True
 STT_LOG_IGNORED = True
-STT_ACTIVE_LISTENING_TIMEOUT = 30
+STT_ACTIVE_LISTENING_TIMEOUT = 300
 
 # Cloud STT fallback keys
 # Cloud STT API keys are shared with LLM backend config above

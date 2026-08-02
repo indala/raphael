@@ -27,6 +27,8 @@ from collections.abc import Callable
 # pyrefly: ignore [missing-import]
 import numpy as np
 
+import sys
+
 from modules.tts_engines import _AUDIO_LOCK
 from modules.tts import _interrupted
 import contextlib
@@ -93,6 +95,18 @@ def _config_data_dir() -> Path:
     """Lazy import config to avoid circular imports."""
     import config
     return Path(getattr(config, "DATA_DIR", "."))
+
+
+# ── FFmpeg path resolution ──────────────────────────────────────────────────
+
+
+def _ffmpeg_path() -> str:
+    """Resolve ffmpeg.exe — bundled next to main exe, or fallback to PATH."""
+    if getattr(sys, "frozen", False):
+        bundled = Path(sys.executable).parent / "ffmpeg.exe"
+    else:
+        bundled = Path(__file__).resolve().parent.parent / "bin" / "ffmpeg.exe"
+    return str(bundled) if bundled.exists() else "ffmpeg"
 
 
 # ── MusicPlayer ─────────────────────────────────────────────────────────────
@@ -690,7 +704,7 @@ class MusicPlayer:
         try:
             # Pipe yt-dlp output through ffmpeg → raw mono PCM
             ffmpeg_proc = subprocess.Popen(
-                ["ffmpeg", "-i", "-", "-f", "s16le", "-ac", "1", "-ar", "44100", "-"],
+                [_ffmpeg_path(), "-i", "-", "-f", "s16le", "-ac", "1", "-ar", "44100", "-"],
                 stdin=proc.stdout, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
@@ -906,7 +920,7 @@ class MusicPlayer:
             else:
                 # Unsupported format → pipe through ffmpeg to WAV
                 raw_data = subprocess.check_output(
-                    ["ffmpeg", "-i", str(fp), "-f", "wav", "-"],
+                    [_ffmpeg_path(), "-i", str(fp), "-f", "wav", "-"],
                     stderr=subprocess.DEVNULL, timeout=300,
                 )
                 a = miniaudio.wav_read_s16(raw_data)

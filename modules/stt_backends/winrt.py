@@ -55,6 +55,8 @@ class WinRTBackend(STTBackend):
         self._stop_event: asyncio.Event | None = None
         self._running = False
         self._state_callback = None
+        self._recognizer = None  # Keep reference to prevent GC
+        self._session = None     # Keep reference to prevent GC
 
     def set_state_callback(self, cb):
         """Register a callback fn(state_str) for UI state tracking."""
@@ -139,9 +141,10 @@ class WinRTBackend(STTBackend):
         if self._stop_event is None:
             self._stop_event = asyncio.Event()
 
-        # Create recognizer
+        # Create recognizer — store as instance var to prevent GC
         try:
             recognizer = SpeechRecognizer()
+            self._recognizer = recognizer
         except Exception as e:
             logger.error("Failed to create SpeechRecognizer: %s", e)
             logger.error("Enable microphone access in Windows Privacy settings.")
@@ -153,6 +156,16 @@ class WinRTBackend(STTBackend):
             SpeechRecognitionScenario.DICTATION, "dictation"
         )
         recognizer.constraints.append(constraint)
+
+        # ── Disable the built-in silence timeout (default ~5s) ──────
+        # WinRT's SpeechRecognizer.Timeout.SpeechRecognitionTimeout controls
+        # how long it waits for silence before ending a session with
+        # TIMEOUT_EXCEEDED. Setting it to 0 means "wait indefinitely".
+        try:
+            recognizer.timeout.speech_recognition_timeout = 0
+            logger.debug("WinRT silence timeout disabled (set to 0)")
+        except Exception as e:
+            logger.debug("Could not set silence timeout: %s", e)
 
         # ── Event handlers ──────────────────────────────────────────
 
@@ -216,8 +229,11 @@ class WinRTBackend(STTBackend):
                 return
 
             try:
-                with contextlib.suppress(Exception):
+                # Only stop if the session is still active to avoid USER_CANCELED
+                try:
                     await session.stop_async()
+                except Exception:
+                    pass  # Already stopped — that's fine
                 await session.start_async()
                 _session_start_time = time.time()
                 logger.debug("WinRT session restarted")
@@ -246,6 +262,7 @@ class WinRTBackend(STTBackend):
 
         # Wire events
         session = recognizer.continuous_recognition_session
+        self._session = session  # Keep reference to prevent GC
         state_token = recognizer.add_state_changed(on_state_changed)
         result_token = session.add_result_generated(on_result_generated)
         completed_token = session.add_completed(on_completed)
@@ -297,3 +314,5 @@ class WinRTBackend(STTBackend):
             session.remove_completed(completed_token)
         except Exception as e:
             logger.debug("WinRT handler cleanup: %s", e)
+        self._recognizer = None
+        self._session = None

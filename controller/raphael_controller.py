@@ -574,13 +574,22 @@ class RaphaelController(QObject):
 
         text_lower = transcription.lower().strip()
 
-        # Wake word detection
+        # Wake word detection — use substring matching for flexibility
         extended_wake_words = list(getattr(config, "STT_WAKE_WORDS", []))
         for w in ["voice access wake up", "unmute", "wake up"]:
             if w not in extended_wake_words:
                 extended_wake_words.append(w)
 
-        if text_lower in extended_wake_words:
+        # Strip punctuation for more flexible matching
+        text_clean = text_lower.rstrip(".!?,;:")
+
+        wake_detected = False
+        for wake_word in extended_wake_words:
+            if wake_word in text_clean or text_clean in wake_word:
+                wake_detected = True
+                break
+
+        if wake_detected:
             self.ui.set_state("LISTENING")
             self.ui.write_log("ai", "Raphael is here.")
             if state.tts_enabled:
