@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
+import config
+
 
 class TaskState(Enum):
     PENDING = "pending"
@@ -86,7 +88,7 @@ class TaskManager:
     _lock = threading.Lock()
     _tasks: ClassVar[dict[str, Task]] = {}
     _current_task_id: str | None = None
-    TASK_OUTPUT_DIR = Path("task_outputs")
+    TASK_OUTPUT_DIR = config.DATA_DIR / "task_outputs"
 
     # Prefix map for readable task IDs (mirrors OpenClaude's prefix scheme)
     TASK_ID_PREFIXES: ClassVar[dict[str, str]] = {"main": "m", "sub_agent": "a", "background": "b", "workflow": "w"}

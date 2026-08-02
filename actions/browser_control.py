@@ -359,13 +359,24 @@ class _BrowserSession:
             if _check_browsers_path:
                 _existing = list(Path(_check_browsers_path).glob("chromium-*"))
                 if not _existing:
-                    raise RuntimeError(
-                        "Playwright Chromium browser is not installed.\n\n"
-                        "Run the following command to install it:\n"
-                        "    Raphael.exe --install-playwright\n\n"
-                        "Or re-run the Raphael installer and make sure the\n"
-                        "'Install Playwright browser' step completes."
-                    )
+                    # Check default Playwright location as fallback
+                    _default_locations = [
+                        Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ms-playwright",
+                        Path.home() / ".cache" / "ms-playwright",
+                    ]
+                    for _alt in _default_locations:
+                        if _alt.is_dir() and list(_alt.glob("chromium-*")):
+                            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_alt)
+                            logger.info("Found Playwright browsers at default location: %s", _alt)
+                            break
+                    else:
+                        raise RuntimeError(
+                            "Playwright Chromium browser is not installed.\n\n"
+                            "Run the following command to install it:\n"
+                            "    Raphael.exe --install-playwright\n\n"
+                            "Or re-run the Raphael installer and make sure the\n"
+                            "'Install Playwright browser' step completes."
+                        )
 
         self.playwright = sync_playwright().__enter__()
         engine = info.get("engine", "chromium")

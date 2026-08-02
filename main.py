@@ -232,21 +232,25 @@ def main():
 
     def deferred_init():
         nonlocal controller
-        logger.info("[Startup] Running deferred heavy initialization...")
-        ui.update_splash(40, "Loading cognitive neural modules...")
+        try:
+            logger.info("[Startup] Running deferred heavy initialization...")
+            ui.update_splash(40, "Loading cognitive neural modules...")
 
-        # Defer importing controller to avoid blocking startup with heavy dependencies (sounddevice, winrt, openai)
-        from controller.raphael_controller import RaphaelController
+            # Defer importing controller to avoid blocking startup with heavy dependencies (sounddevice, winrt, openai)
+            from controller.raphael_controller import RaphaelController
 
-        ui.update_splash(60, "Initializing system controller...")
-        controller = RaphaelController(ui)
+            ui.update_splash(60, "Initializing system controller...")
+            controller = RaphaelController(ui)
 
-        def _cleanup():
-            if controller and controller.vad_detector:
-                controller.vad_detector.stop()
+            def _cleanup():
+                if controller and controller.vad_detector:
+                    controller.vad_detector.stop()
 
-        atexit.register(_cleanup)
-        logger.info("[Startup] Deferred initialization complete.")
+            atexit.register(_cleanup)
+            logger.info("[Startup] Deferred initialization complete.")
+        except Exception as exc:
+            logger.exception("[Startup] Deferred initialization FAILED: %s", exc)
+            ui.update_splash(0, f"Startup failed: {exc}")
 
         # Check for updates in background (only in GUI mode)
         def _on_update_found(release):

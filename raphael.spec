@@ -56,7 +56,6 @@ hiddenimports = [
 
     # ── Network & LLM ──
     "httpx",
-    "h2",
     "openai",
 
     # ── Audio & Voice ──
@@ -78,9 +77,6 @@ hiddenimports = [
     "pycaw",
     "mss",
     "PIL",
-    "pystray",
-    "pystray._win32",
-    "keyboard",
 
     # ── Core orchestrator modules ──
     "orchestrator.tools",  # Tool registry (loads native + generated tools)
@@ -97,7 +93,7 @@ hiddenimports = [
     "modules.tts_engines",
     "modules.tts_registry",
     "modules.tts_backends.sapi5_backend",
-    "modules.tts_backends.edge_tts_backend",
+    "modules.tts_backends.edgetts_backend",
     "modules.stt",
     "modules.stt_backends.cloud",
     "modules.stt_backends.whisper_local",
@@ -109,9 +105,7 @@ hiddenimports = [
     "modules.weather",
     "modules.ui_control",
     "modules.chart_gen",
-    "modules.music_metadata",
-
-    # ── Agents ──
+    # ── Actions ──
     "agents.manager_agent",
     "agents.base_agent",
     "agents.tool_manager_agent",
@@ -124,7 +118,7 @@ hiddenimports = [
     "agents.researcher_agent",
 
     # ── Orchestrator subsystems ──
-    "orchestrator.orchestrator",
+    "orchestrator.agent_orchestrator",
     "orchestrator.startup",
     "orchestrator.task_manager",
     "orchestrator.background",
@@ -168,58 +162,21 @@ hiddenimports = [
     "modules.stt_backends.registry",
     "modules.stt_backends.base",
 
-    # ── Optional heavy imports (lazy-loaded) ──
-    "faster_whisper",
-    "pyttsx3",
-
-    # ── WinRT speech (only if used) ──
-    "winrt.windows.media.speechsynthesis",
-    "winrt.windows.media.capture",
-    "winrt.windows.storage.streams",
-
-    # ── UI system tray / hotkeys ──
-    "pystray",
-    "pystray._win32",
-    "keyboard",
-    "pynput",
-    "pynput.keyboard",
-    "pynput.mouse",
-
-    # ── Utilities ──
+    # ── Transitive dependencies (used by openai, httpx, plotly, etc.) ──
     "pyperclip",
     "aiohttp",
     "httpx_sse",
     "pydantic",
-    "pytz",
     "dateutil",
     "yaml",
     "toml",
     "tomli",
-    "tomli_w",
     "packaging",
     "typing_extensions",
     "dotenv",
     "dotenv.main",
     "psutil._pswindows",
 
-    # ── TTS Registry ──
-    "modules.tts_registry",
-
-    # ── Optional heavy features (can be lazy-loaded) ──
-    "playwright",
-    "playwright.async_api",
-    "browser_control",
-    "browser_control.smart_browser",
-    "browser_control.profile_manager",
-    "browser_control.download_manager",
-    "browser_control.automation_engine",
-    "browser_control.dom_interactor",
-    "browser_control.form_filler",
-    "browser_control.tab_manager",
-    "browser_control.page_analyzer",
-
-    # ── CTranslate2 for faster_whisper ──
-    "ctranslate2",
 ]
 
 # ============================================================
@@ -276,15 +233,8 @@ excludes = [
     "nbformat",
     "nbconvert",
     "pytest",
-    "unittest",
-    "doctest",
     "xmlrpc",
-    "pydoc",
     "lib2to3",
-    "pdb",
-    "profile",
-    "pstats",
-    "cProfile",
     "pyautogui",  # NOT USED in codebase
 
     # ── Matplotlib backends you don't need ──
@@ -348,6 +298,16 @@ excludes = [
     "pyglet",
     "pygame",
     "sdl2",
+
+    # ── Heavy packages (~560MB savings) — installed separately or cloud-only ──
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "ctranslate2",
+    "playwright",
+    "playwright.async_api",
+    "onnxruntime",
+    "onnxruntime.training",
 ]
 
 # ============================================================
