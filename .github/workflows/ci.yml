@@ -38,13 +38,18 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
       - name: Build with PyInstaller
-        run: python build_app.py --skip-hybrid
+        run: python build_app.py
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4

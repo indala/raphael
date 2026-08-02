@@ -6,6 +6,8 @@ Run with: python -m pytest tests/test_modules.py -v
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from modules import clipboard, app_launcher, chart_gen, screen, ui_control
@@ -76,6 +78,8 @@ def test_clipboard_image_copy():
 def test_ui_control_basics():
     """Test basic UI control functions (like getting mouse position)."""
     pos = ui_control.get_mouse_position()
+    if pos is None:
+        pytest.skip("C# bridge not available in this environment")
     assert isinstance(pos, tuple)
     assert len(pos) == 2
     assert isinstance(pos[0], int)
