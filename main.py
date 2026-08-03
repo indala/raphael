@@ -129,6 +129,68 @@ def validate_config():
         sys.exit(1)
 
 
+def _check_single_instance():
+    """Ensure only one instance of Raphael runs at a time.
+
+    Uses Qt's QLocalServer / QLocalSocket IPC. If another instance is already
+    running, sends it a "show" signal and returns False so the caller exits.
+
+    A QApplication must already exist before calling this function.
+    """
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtNetwork import QLocalServer, QLocalSocket
+
+    app = QApplication.instance()
+    assert app is not None, "_check_single_instance() requires a running QApplication"
+
+    server_name = "raphael_single_instance"
+
+    # Try to connect to an existing instance
+    socket = QLocalSocket()
+    socket.connectToServer(server_name)
+    if socket.waitForConnected(2000):
+        # Another instance is running — tell it to show
+        socket.write(b"show")
+        socket.waitForBytesWritten(1000)
+        socket.disconnectFromServer()
+        return False
+
+    # No existing instance — become the server
+    server = QLocalServer()
+    server.removeServer(server_name)  # Clean up stale server
+    if not server.listen(server_name):
+        logger.warning("QLocalServer failed to listen on '%s'; "
+                       "single-instance guard disabled.", server_name)
+        return True
+
+    def _on_connection():
+        while sock := server.nextPendingConnection():
+            sock.waitForReadyRead(1000)
+            if sock.readAll().data() == b"show":
+                _signal_show_window()
+            sock.disconnectFromServer()
+
+    server.newConnection.connect(_on_connection)
+    # Keep server alive for the app's lifetime
+    app._instance_server = server
+    return True
+
+
+def _signal_show_window():
+    """Post a custom event to the main window to bring it to front."""
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    # Send a deferred call to find and activate the main window
+    for widget in app.topLevelWidgets():
+        if hasattr(widget, "show_and_activate"):
+            widget.show_and_activate()
+            break
+
+
 def main():
     """Entry point — launches PyQt6 HUD or MCP server mode."""
     if "--install-playwright" in sys.argv:
@@ -138,6 +200,15 @@ def main():
         from raphael_mcp_server import mcp
         mcp.run()
         return
+
+    # Create the application early so _check_single_instance() and
+    # RaphaelUI share the same QApplication instance.
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # Single-instance guard — exit if Raphael is already running
+    if not _check_single_instance():
+        sys.exit(0)
 
     # Check if settings.toml exists and has at least one endpoint configured
     from _user_settings.settings_manager import settings_path

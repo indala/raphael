@@ -118,25 +118,26 @@ class GroqSTTBackend(STTBackend):
     def start_streaming(self, callback) -> StreamHandle:
         """Start continuous mic capture → energy VAD → cloud transcription.
 
-        Uses ``sounddevice.InputStream`` for capture and pure numpy energy
+        Uses ``sounddevice.InputStream`` for capture and pure energy
         detection for voice activity (no C extensions in the audio thread).
         Detected speech segments are sent to Groq in background threads.
 
         Args:
-            callback: Callable(text: str, is_final: bool) receiving results.
+            callback: Callable ``text: str, is_final: bool`` receiving results.
 
         Returns:
-            True if mic capture started, False otherwise.
+            A ``StreamHandle`` if capture started, ``None`` otherwise so the
+            caller can fall through to the next STT backend.
         """
         if not self._configure():
             logger.error("GroqSTT: cannot start — API key not configured")
-            return StreamHandle(self)
+            return None
 
         try:
             import sounddevice as sd
         except ImportError:
             logger.error("GroqSTT: sounddevice not installed")
-            return StreamHandle(self)
+            return None
 
         # Pre-import state reference (NOT in the callback — imports in
         # real-time audio threads can deadlock or crash the process)

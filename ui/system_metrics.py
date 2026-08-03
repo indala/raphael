@@ -40,6 +40,7 @@ class SystemMonitor(threading.Thread):
         self.net_speed = 0.0  # KB/s
         self.gpu_percent = 0.0
         self.cpu_temp = 0.0
+        self.gpu_temp = 0.0
 
         # Net tracking
         self._last_net = 0
@@ -78,6 +79,7 @@ class SystemMonitor(threading.Thread):
                 "net": self.net_speed,
                 "gpu": self.gpu_percent,
                 "temp": self.cpu_temp,
+                "gpu_temp": self.gpu_temp,
             }
 
     def _poll_gpu(self) -> float:
@@ -113,6 +115,23 @@ class SystemMonitor(threading.Thread):
         except Exception:
             pass
 
+        return 0.0
+
+    def _poll_gpu_temp(self) -> float:
+        """GPU temperature (Celsius) via nvidia-smi. 0.0 when unavailable."""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=temperature.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=1,
+            )
+            if result.returncode == 0:
+                line = result.stdout.strip()
+                if line:
+                    return float(line.split("\n")[0])
+        except Exception:
+            pass
         return 0.0
 
     def _poll_temp(self) -> float:
@@ -219,6 +238,7 @@ class SystemMonitor(threading.Thread):
                     self.net_speed = snap.get("net_speed_kbps", 0.0)
                     self.gpu_percent = snap.get("gpu_percent", 0.0)
                     self.cpu_temp = snap.get("cpu_temp", 0.0)
+                    self.gpu_temp = snap.get("gpu_temp", 0.0)
                     self.spk_vol = spk_vol
                     self.spk_muted = spk_muted
 
@@ -260,6 +280,7 @@ class SystemMonitor(threading.Thread):
 
                 gpu = self._poll_gpu()
                 temp = self._poll_temp()
+                gpu_temp = self._poll_gpu_temp()
                 spk_vol, spk_muted = self._poll_speaker()
 
                 with self._lock:
@@ -268,6 +289,7 @@ class SystemMonitor(threading.Thread):
                     self.net_speed = net_speed
                     self.gpu_percent = gpu
                     self.cpu_temp = temp
+                    self.gpu_temp = gpu_temp
                     self.spk_vol = spk_vol
                     self.spk_muted = spk_muted
 

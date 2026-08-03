@@ -134,6 +134,8 @@ class RaphaelController(QObject):
         self.signals.orchestrator_ready.connect(self._on_orchestrator_ready)
 
         # TTS Queue Worker (serializes all TTS to prevent thread explosion)
+        import collections
+        self._recent_spoken_texts: collections.deque[str] = collections.deque(maxlen=10)
         self._tts_queue: queue.Queue = queue.Queue()
         self._tts_interrupt = threading.Event()
         self._tts_worker = threading.Thread(target=self._tts_worker_loop, daemon=True)
@@ -572,6 +574,21 @@ class RaphaelController(QObject):
         if not transcription:
             return
 
+        # ── Semantic Echo Filter ──
+        # Discard the transcription if it matches or overlaps with recently spoken TTS text
+        import re
+        clean_trans = re.sub(r'[^\w\s]', '', transcription.lower()).strip()
+        is_echo = False
+        if clean_trans:
+            for spoken in list(self._recent_spoken_texts):
+                clean_spoken = re.sub(r'[^\w\s]', '', spoken.lower()).strip()
+                if clean_spoken and (clean_trans in clean_spoken or clean_spoken in clean_trans):
+                    is_echo = True
+                    break
+        if is_echo:
+            logger.info("Echo guard: discarded transcription matching spoken text: \"%s\"", transcription)
+            return
+
         text_lower = transcription.lower().strip()
 
         # Wake word detection — use substring matching for flexibility
@@ -584,19 +601,51 @@ class RaphaelController(QObject):
         text_clean = text_lower.rstrip(".!?,;:")
 
         wake_detected = False
+        matched_wake_word = None
         for wake_word in extended_wake_words:
-            if wake_word in text_clean or text_clean in wake_word:
+            if wake_word in text_clean:
                 wake_detected = True
+                matched_wake_word = wake_word
+                break
+            elif text_clean in wake_word:
+                wake_detected = True
+                matched_wake_word = text_clean
                 break
 
-        if wake_detected:
-            self.ui.set_state("LISTENING")
-            self.ui.write_log("ai", "Raphael is here.")
-            if state.tts_enabled:
-                self.ui.set_state("SPEAKING")
-                self._tts_queue.put(("Raphael is here.", None))
-            self._done()
+        if state.wake_word_required and not wake_detected:
+            if getattr(config, "STT_LOG_IGNORED", False):
+                logger.debug("Wake word required: ignored transcription '%s'", transcription)
             return
+
+        if wake_detected:
+            state.wake_word_required = False
+            # Strip the wake word from the transcription
+            remaining_text = transcription
+            if matched_wake_word:
+                import re as re_mod
+                remaining_text = re_mod.sub(re_mod.escape(matched_wake_word), "", transcription, flags=re_mod.IGNORECASE).strip()
+            
+            # Clean up punctuation/spaces from remaining text
+            import re as re_mod
+            remaining_clean = re_mod.sub(r'[^\w\s]', '', remaining_text).strip()
+            
+            if remaining_clean:
+                logger.info("Wake word + command detected. Processing: '%s'", remaining_text)
+                self._submit_message(remaining_text)
+                return
+            else:
+                self.ui.write_log("ai", "Raphael is here.")
+                # Defer _done() until the greeting finishes speaking. Calling
+                # _done() right here would start the active-listening window
+                # while TTS is still playing; the echo guard drains STT during
+                # and just after TTS, so the user's reply gets swallowed and the
+                # 8s window expires → the assistant "falls asleep after greeting".
+                if state.tts_enabled:
+                    self.ui.set_state("SPEAKING")
+                    self._tts_queue.put(("Raphael is here.", lambda: self.signals.processing_done.emit()))
+                else:
+                    self._done()
+                return
 
         self._submit_message(transcription)
 
@@ -716,6 +765,7 @@ class RaphaelController(QObject):
                 if response and response.strip().lower() != "__noop__":
                     if state.tts_enabled and not state.muted:
                         from modules.tts import speak
+                        self._recent_spoken_texts.append(response)
                         speak(response)
                     self.ui.write_log("ai", f"[Proactive] {response}")
                 self._set_processing(False)
@@ -859,6 +909,8 @@ class RaphaelController(QObject):
                 break
             text, done_callback = item
             try:
+                if text:
+                    self._recent_spoken_texts.append(text)
                 speak(text)
             except Exception as e:
                 logger.error("TTS Worker: %s", e)

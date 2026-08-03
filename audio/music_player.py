@@ -37,7 +37,102 @@ logger = logging.getLogger(__name__)
 
 CHUNK_SECONDS = 10            # seconds of audio per chunk during playback
 STREAM_BUFFER_SECONDS = 3      # seconds of initial audio pre-buffer for streaming
+MIN_PREBUF_SECONDS = 2         # minimum pre-buffer even on fast networks
+MAX_PREBUF_SECONDS = 12        # maximum pre-buffer on very slow networks
+BITRATE_FALLBACK_FACTOR = 0.5  # fallback to download if throughput < 50% of required
 TEMP_DIR = Path(tempfile.gettempdir()) / "Raphael" / "temp_music"
+
+
+# ── Network Monitor ────────────────────────────────────────────────────────
+
+
+class NetworkMonitor:
+    """Tracks throughput and jitter during streaming to enable adaptive buffering.
+
+    Measures bytes/sec on the raw PCM pipe (ffmpeg output) and computes read-time
+    variance to detect network jitter.  The required raw bitrate for 16-bit mono
+    44.1 kHz audio is 44100 * 2 = 88 200 bytes/sec (~705 kbps).
+    """
+
+    REQUIRED_RAW_BPS = 44100 * 2  # bytes/sec for 16-bit mono 44.1 kHz
+
+    def __init__(self) -> None:
+        self._read_times: list[float] = []
+        self._byte_counts: list[int] = []
+        self._start_time: float = 0.0
+        self._total_bytes: int = 0
+        self._window_start: float = 0.0
+        self._window_bytes: int = 0
+
+    def start(self) -> None:
+        self._start_time = time.time()
+        self._window_start = self._start_time
+
+    def record_read(self, nbytes: int) -> None:
+        """Record a single pipe read for throughput/jitter calculation."""
+        now = time.time()
+        elapsed = now - self._window_start
+        self._total_bytes += nbytes
+        self._window_bytes += nbytes
+
+        # Keep a sliding window of recent read times (last 20 reads)
+        if elapsed > 0:
+            self._read_times.append(elapsed)
+            self._byte_counts.append(nbytes)
+            if len(self._read_times) > 20:
+                self._read_times.pop(0)
+                self._byte_counts.pop(0)
+            self._window_start = now
+
+    @property
+    def throughput_bps(self) -> float:
+        """Measured throughput in bytes/sec (raw PCM)."""
+        elapsed = time.time() - self._start_time
+        if elapsed < 0.5:
+            return float(self.REQUIRED_RAW_BPS)  # not enough data yet
+        return self._total_bytes / elapsed
+
+    @property
+    def throughput_ratio(self) -> float:
+        """Throughput as a fraction of required bitrate (>1.0 = fast enough)."""
+        return self.throughput_bps / self.REQUIRED_RAW_BPS
+
+    @property
+    def jitter_ms(self) -> float:
+        """Standard deviation of recent read times in milliseconds."""
+        if len(self._read_times) < 3:
+            return 0.0
+        import statistics
+        return statistics.stdev(self._read_times) * 1000
+
+    def recommended_prebuf_seconds(self) -> float:
+        """Calculate adaptive pre-buffer duration based on measured throughput.
+
+        If throughput >= required bitrate: use minimum buffer (fast start).
+        If throughput < required bitrate: scale up buffer proportionally.
+        """
+        ratio = self.throughput_ratio
+        if ratio >= 1.0:
+            return MIN_PREBUF_SECONDS
+        # Scale inversely: half speed → 2x buffer, capped at max
+        recommended = MIN_PREBUF_SECONDS / max(ratio, 0.1)
+        return min(recommended, MAX_PREBUF_SECONDS)
+
+    def should_fallback_to_download(self) -> bool:
+        """Return True if sustained throughput is too low for streaming."""
+        # Only check after at least 2 seconds of data
+        elapsed = time.time() - self._start_time
+        if elapsed < 2.0:
+            return False
+        return self.throughput_ratio < BITRATE_FALLBACK_FACTOR
+
+    def recommended_chunk_frames(self) -> int:
+        """Adaptive chunk size: larger chunks when jitter is high (fewer syscalls)."""
+        if self.jitter_ms > 50:
+            return 8192   # ~186 ms at 44100 Hz — fewer syscalls, smoother
+        if self.jitter_ms > 20:
+            return 4096   # default ~93 ms
+        return 2048        # low jitter → smaller chunks for responsiveness
 
 
 def cleanup_temp_files(max_age_days: int = 7) -> int:
@@ -555,7 +650,22 @@ class MusicPlayer:
 
                 # Stream mode — pass entry to cache PCM on completion
                 if entry.stream_proc is not None:
-                    self._stream_from_proc(entry.stream_proc, entry)
+                    result = self._stream_from_proc(entry.stream_proc, entry)
+                    if result is False:
+                        # Adaptive streaming fell back to download — kill stream
+                        # proc and re-resolve via download
+                        with contextlib.suppress(Exception):
+                            entry.stream_proc.kill()
+                        entry.stream_proc = None
+                        logger.info("Fallback: downloading '%s' instead of streaming.", entry.title)
+                        self._download_single(entry)
+                        if entry.filepath is None:
+                            logger.warning("Fallback download failed for '%s', skipping.", entry.title)
+                            with self._lock:
+                                self._advance()
+                            continue
+                        self._download_and_decode(entry)
+                        self._play_entry(entry)
                     with self._lock:
                         if self._music_interrupted.is_set():
                             # Interrupted (seek/replay) — entry is now cached,
@@ -693,13 +803,16 @@ class MusicPlayer:
         Uses a persistent ``sd.OutputStream`` to avoid the open/close glitching
         from calling ``sd.play()`` / ``sd.stop()`` per chunk.
 
-        Accumulates PCM data into ``entry.samples`` so seeking and replaying
-        work from cache instead of re-streaming.
+        Adaptively adjusts pre-buffer size and chunk size based on measured
+        network throughput and jitter.  Falls back to returning ``False`` if
+        sustained bandwidth is too low (caller should switch to download mode).
         """
         # pyrefly: ignore [missing-import]
         import sounddevice as sd
         accumulated: list[np.ndarray] = []
-        CHUNK_FRAMES = 4096  # ~93 ms at 44100 Hz
+        monitor = NetworkMonitor()
+        monitor.start()
+        fallback = False
 
         try:
             # Pipe yt-dlp output through ffmpeg → raw mono PCM
@@ -710,14 +823,34 @@ class MusicPlayer:
             )
             proc.stdout.close()  # type: ignore[union-attr]
 
-            # ── Pre-buffer: fill initial buffer before starting playback ──
-            prebuf_frames = int(STREAM_BUFFER_SECONDS * 44100)
+            # ── Adaptive pre-buffer: measure throughput before playback ──
+            # Start with minimum buffer, expand if network is slow
+            prebuf_target = int(MIN_PREBUF_SECONDS * 44100 * 2)  # bytes
             prebuf_bytes = bytearray()
-            while len(prebuf_bytes) < prebuf_frames * 2:
-                chunk = ffmpeg_proc.stdout.read(CHUNK_FRAMES * 2)  # type: ignore[union-attr]
+            adaptive_chunk = 4096 * 2  # start with default chunk size (bytes)
+
+            while len(prebuf_bytes) < prebuf_target:
+                chunk = ffmpeg_proc.stdout.read(adaptive_chunk)  # type: ignore[union-attr]
                 if not chunk:
                     break
                 prebuf_bytes.extend(chunk)
+                monitor.record_read(len(chunk))
+
+                # Recalculate target based on measured throughput
+                if monitor.throughput_ratio < 1.0 and len(prebuf_bytes) >= int(MIN_PREBUF_SECONDS * 44100 * 2):
+                    new_target = int(monitor.recommended_prebuf_seconds() * 44100 * 2)
+                    prebuf_target = max(prebuf_target, new_target)
+
+                # Check for fallback during pre-buffer phase
+                if monitor.should_fallback_to_download():
+                    logger.warning("Network too slow for streaming (%.0f%% throughput), "
+                                   "falling back to download.", monitor.throughput_ratio * 100)
+                    fallback = True
+                    break
+
+            if fallback:
+                return False  # signal caller to use download mode
+
             if prebuf_bytes:
                 raw = np.frombuffer(bytes(prebuf_bytes), dtype=np.int16).astype(np.float32) / 32768.0
                 accumulated.append(raw.copy())
@@ -743,9 +876,13 @@ class MusicPlayer:
                                 break
                         continue
 
-                    raw_bytes = ffmpeg_proc.stdout.read(CHUNK_FRAMES * 2)  # type: ignore[union-attr]
+                    # Adaptive chunk size based on jitter
+                    chunk_frames = monitor.recommended_chunk_frames()
+                    raw_bytes = ffmpeg_proc.stdout.read(chunk_frames * 2)  # type: ignore[union-attr]
                     if not raw_bytes:
                         break
+
+                    monitor.record_read(len(raw_bytes))
 
                     # int16 → float32 mono
                     raw = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -773,10 +910,17 @@ class MusicPlayer:
             entry.sample_rate = 44100
             entry.duration_sec = len(entry.samples) / 44100
             entry.stream_proc = None
-            logger.info("Cached stream: %s (%.1fs)", entry.title, entry.duration_sec)
+            logger.info("Cached stream: %s (%.1fs) [throughput: %.0f%%, jitter: %.0fms]",
+                        entry.title, entry.duration_sec,
+                        monitor.throughput_ratio * 100, monitor.jitter_ms)
+
+        return not fallback
 
     def _stream_playlist_item(self, entry: SongEntry, index: int, base_query: str):
-        """Run a single yt-dlp stream for one item in a playlist query."""
+        """Run a single yt-dlp stream for one item in a playlist query.
+
+        Falls back to download mode if adaptive streaming detects low bandwidth.
+        """
         q = base_query
         if index > 0:
             q = f"{base_query} #{index+1}"
@@ -788,7 +932,15 @@ class MusicPlayer:
                  "--no-playlist", "--restrict-filenames"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             )
-            self._stream_from_proc(proc, entry)
+            result = self._stream_from_proc(proc, entry)
+            if result is False:
+                # Adaptive streaming fell back — download instead
+                logger.info("Playlist item %d: falling back to download.", index + 1)
+                self._resolve_local(q)
+                if entry.filepath is None:
+                    self._download_single(entry)
+                if entry.filepath is not None:
+                    self._download_and_decode(entry)
         except Exception as e:
             logger.error("Playlist item %d failed: %s", index, e)
 

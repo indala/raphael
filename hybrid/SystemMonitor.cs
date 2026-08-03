@@ -193,6 +193,39 @@ public class SystemMonitor : IDisposable
         return 0f;
     }
 
+    /// <summary>
+    /// GPU temperature (Celsius) via nvidia-smi.
+    /// Returns 0 when unavailable (no NVIDIA GPU, nvidia-smi not on PATH, or timeout).
+    /// </summary>
+    public float GetGpuTemperature()
+    {
+        try
+        {
+            using var proc = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "nvidia-smi",
+                    Arguments = "--query-gpu=temperature.gpu --format=csv,noheader,nounits",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                }
+            };
+            if (!proc.Start()) return 0f;
+            string? line = proc.StandardOutput.ReadLine();
+            if (!proc.WaitForExit(1200))
+            {
+                try { proc.Kill(); } catch { }
+            }
+            if (line != null && float.TryParse(line.Trim(), out float tempC))
+                return (float)Math.Round(tempC, 1);
+        }
+        catch { }
+        return 0f;
+    }
+
     /// <summary>Thread-safe snapshot of all metrics.</summary>
     public MetricSnapshot GetSnapshot()
     {
@@ -202,7 +235,8 @@ public class SystemMonitor : IDisposable
             MemPercent = GetMemoryUsage(),
             NetSpeedKbps = GetNetworkSpeed(),
             GpuPercent = GetGpuUsage(),
-            CpuTemp = GetCpuTemperature()
+            CpuTemp = GetCpuTemperature(),
+            GpuTemp = GetGpuTemperature()
         };
     }
 
@@ -245,4 +279,5 @@ public class MetricSnapshot
     public float NetSpeedKbps { get; init; }
     public float GpuPercent { get; init; }
     public float CpuTemp { get; init; }
+    public float GpuTemp { get; init; }
 }

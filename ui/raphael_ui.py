@@ -16,7 +16,7 @@ class RaphaelUI:
     """Public API for the Raphael HUD interface."""
 
     def __init__(self):
-        self._app = QApplication(sys.argv)
+        self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
         self._app.setQuitOnLastWindowClosed(False)
 

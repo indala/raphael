@@ -308,7 +308,8 @@ void ProcessRequest(Request req)
                     mem_percent = snap.MemPercent,
                     net_speed_kbps = snap.NetSpeedKbps,
                     gpu_percent = snap.GpuPercent,
-                    cpu_temp = snap.CpuTemp
+                    cpu_temp = snap.CpuTemp,
+                    gpu_temp = snap.GpuTemp
                 });
                 break;
             }

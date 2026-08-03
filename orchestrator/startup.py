@@ -133,7 +133,10 @@ class StartupManager:
 
             system_prompt = "\n".join(prompt_parts)
 
-            messages = [{"role": "system", "content": system_prompt}]
+            messages = [
+                {"role": "system", "content": "You are Raphael, an advanced AI desktop assistant. The system has just booted and completed startup checks."},
+                {"role": "user", "content": system_prompt}
+            ]
             resp = client.chat(messages, None, reason="startup_briefing")
 
             if resp and resp.content and not resp.content.startswith("[Error calling LLM"):  # type: ignore[union-attr]

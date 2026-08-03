@@ -269,7 +269,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "list_local_songs",
-                "description": "List all local audio files in the music library.",
+                "description": "List every audio file saved in the local music library. Use to show which songs are available for offline playback (alias for scan_local_library).",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },

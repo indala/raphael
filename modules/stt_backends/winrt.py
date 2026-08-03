@@ -9,6 +9,7 @@ always-listening dictation. Extracted into STTBackend ABC with:
 """
 
 import asyncio
+import datetime
 import logging
 import threading
 import time
@@ -32,6 +33,25 @@ try:
     _WINRT_AVAILABLE = True
 except ImportError:
     logger.debug("winrt package not available — WinRT STT backend disabled")
+
+# Known Windows speech-engine HRESULT codes (as signed 32-bit).
+_WINERR_INTERNAL_SPEECH = -2147199584  # "Internal Speech Error" — typically when running elevated
+_WINERR_PRIVACY_POLICY = -2147199735   # online speech recognition privacy policy not accepted
+
+
+def _is_elevated() -> bool:
+    """True if this process runs with Administrator privileges.
+
+    Windows' speech engine (SpeechRuntime.exe) often fails to create a
+    recognizer from an elevated integrity level, surfacing as
+    ``Internal Speech Error``. Detection lets us warn the user instead of
+    silently producing a dead STT.
+    """
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 
 
 @STTRegistry.register("winrt")
@@ -57,6 +77,13 @@ class WinRTBackend(STTBackend):
         self._state_callback = None
         self._recognizer = None  # Keep reference to prevent GC
         self._session = None     # Keep reference to prevent GC
+        # Init handshake — start_streaming() must NOT claim success until the
+        # recognizer is actually live, otherwise the fallback chain (groq,
+        # whisper_local) never gets a chance when WinRT cannot start (e.g.
+        # elevated-process "Internal Speech Error").
+        self._init_done = threading.Event()
+        self._init_success = False
+        self._init_error = ""
 
     def set_state_callback(self, cb):
         """Register a callback fn(state_str) for UI state tracking."""
@@ -75,7 +102,13 @@ class WinRTBackend(STTBackend):
         return _WINRT_AVAILABLE
 
     def start_streaming(self, on_partial):
-        """Start continuous dictation on a background thread."""
+        """Start continuous dictation on a background thread.
+
+        Blocks briefly (up to 8s) on an init handshake so this method only
+        returns ``True`` once the recognizer is genuinely listening. On any
+        init failure it returns ``False`` so the caller's fallback chain
+        (groq, whisper_local) can take over instead of a silently dead winrt.
+        """
         if not _WINRT_AVAILABLE:
             raise SetupError(
                 tool="WinRT STT",
@@ -85,12 +118,34 @@ class WinRTBackend(STTBackend):
                 backend=self.name,
             )
 
+        if _is_elevated():
+            logger.warning(
+                "Raphael is running as Administrator. Windows speech recognition "
+                "often fails in elevated processes ('Internal Speech Error'). If "
+                "WinRT STT cannot start, relaunch without 'Run as administrator' "
+                "or rely on the groq/whisper_local fallback."
+            )
+
         self._stop_event = asyncio.Event()
+        self._init_done = threading.Event()
+        self._init_success = False
+        self._init_error = ""
         self._thread = threading.Thread(
             target=self._run_loop, args=(on_partial,),
             daemon=True, name="stt-winrt",
         )
         self._thread.start()
+
+        # Wait for the background thread to reach "listening" (or fail). The
+        # recognizer is created inside that thread, so without this wait we'd
+        # return success before the recognizer exists.
+        if not self._init_done.wait(timeout=8.0):
+            self._init_error = self._init_error or "timed out waiting for WinRT recognizer init"
+            logger.error("WinRT STT init timed out: %s", self._init_error)
+            return False
+        if not self._init_success:
+            logger.error("WinRT STT failed to start: %s", self._init_error)
+            return False
         return True
 
     def health(self) -> bool:
@@ -119,6 +174,9 @@ class WinRTBackend(STTBackend):
             self._loop.run_until_complete(self._async_run(on_partial))
         except Exception as e:
             logger.exception("WinRT STT loop crashed: %s", e)
+            self._init_success = False
+            self._init_error = self._init_error or f"loop crashed: {e}"
+            self._init_done.set()
         finally:
             # Clean up pending tasks to avoid "Task was destroyed" errors
             try:
@@ -146,8 +204,17 @@ class WinRTBackend(STTBackend):
             recognizer = SpeechRecognizer()
             self._recognizer = recognizer
         except Exception as e:
+            winerr = getattr(e, "winerror", None)
             logger.error("Failed to create SpeechRecognizer: %s", e)
+            if winerr == _WINERR_INTERNAL_SPEECH:
+                logger.error(
+                    "WinRT: 'Internal Speech Error' usually means Raphael is running "
+                    "as Administrator — relaunch without 'Run as administrator'."
+                )
             logger.error("Enable microphone access in Windows Privacy settings.")
+            self._init_success = False
+            self._init_error = f"SpeechRecognizer() failed: {e}"
+            self._init_done.set()
             on_partial("", True)  # Signal error
             return
 
@@ -157,13 +224,26 @@ class WinRTBackend(STTBackend):
         )
         recognizer.constraints.append(constraint)
 
-        # ── Disable the built-in silence timeout (default ~5s) ──────
-        # WinRT's SpeechRecognizer.Timeout.SpeechRecognitionTimeout controls
-        # how long it waits for silence before ending a session with
-        # TIMEOUT_EXCEEDED. Setting it to 0 means "wait indefinitely".
+        # ── Fix the built-in silence timeout ────────────────────────
+        # SpeechRecognizer.Timeouts (plural!) exposes:
+        #   initial_silence_timeout  — wait for speech to START (default 5s)
+        #   end_silence_timeout      — pause after speech before finalizing (default 0.5s)
+        #   babble_timeout           — noise the recognizer treats as speech
+        # These take datetime.timedelta. The old code set
+        # `recognizer.timeout.speech_recognition_timeout = 0`, which
+        # (a) used the wrong attribute name (Timeout vs Timeouts) and
+        # (b) referenced a property that doesn't exist — so the default
+        # 5s wait-for-speech timeout always fired, ending every session
+        # with TIMEOUT_EXCEEDED after ~5s of silence and missing wake words.
+        #
+        # Fix: extend the initial silence window to "wait indefinitely".
+        # We deliberately leave end_silence_timeout at its default — that
+        # value is what finalizes an utterance after the user stops
+        # speaking; zeroing it can prevent commands from finalizing.
         try:
-            recognizer.timeout.speech_recognition_timeout = 0
-            logger.debug("WinRT silence timeout disabled (set to 0)")
+            _timeouts = recognizer.timeouts
+            _timeouts.initial_silence_timeout = datetime.timedelta(0)
+            logger.debug("WinRT initial silence timeout disabled (wait indefinitely)")
         except Exception as e:
             logger.debug("Could not set silence timeout: %s", e)
 
@@ -229,14 +309,15 @@ class WinRTBackend(STTBackend):
                 return
 
             try:
-                # Only stop if the session is still active to avoid USER_CANCELED
-                try:
-                    await session.stop_async()
-                except Exception:
-                    pass  # Already stopped — that's fine
+                # Deliberately do NOT call stop_async() here. This coroutine
+                # runs in response to on_completed — the session has already
+                # ended. Calling stop_async() on an ended session emits a
+                # spurious USER_CANCELED completion that re-triggers
+                # on_completed, producing a self-perpetuating restart loop.
+                # Just start a fresh session directly.
                 await session.start_async()
                 _session_start_time = time.time()
-                logger.debug("WinRT session restarted")
+                logger.info("WinRT session restarted (back in listening mode)")
             except Exception as e:
                 _restart_attempts += 1
                 logger.error("WinRT restart %d failed: %s", _restart_attempts, e)
@@ -248,14 +329,29 @@ class WinRTBackend(STTBackend):
 
         def on_completed(sender, args):
             """Session ended — log status and restart if still running."""
-            # Log the completion reason to diagnose short sessions
             status_code = getattr(args, "status", None)
             status_name = getattr(status_code, "name", str(status_code)) if status_code is not None else "unknown"
             duration = time.time() - _session_start_time
-            logger.warning(
-                "WinRT session ended (%.2fs) — status: %s",
-                duration, status_name,
-            )
+
+            # USER_CANCELED is emitted in two cases:
+            #   (a) our own stop_async() on clean shutdown — self-inflicted, not
+            #       running, no restart needed, no alarm.
+            #   (b) the OS speech engine interrupting an ACTIVE session, e.g. on
+            #       audio-focus/routing changes or mic contention. This is a
+            #       normal, recoverable interrupt — restart and keep listening.
+            if status_name == "USER_CANCELED" and not self._running:
+                logger.debug("WinRT session stopped cleanly (status: USER_CANCELED)")
+                return
+            if status_name == "USER_CANCELED" and self._running:
+                logger.info(
+                    "WinRT session interrupted by the system (%.2fs) — auto-restarting",
+                    duration,
+                )
+            else:
+                logger.warning(
+                    "WinRT session ended (%.2fs) — status: %s",
+                    duration, status_name,
+                )
             if self._running and self._loop and self._loop.is_running():
                 with contextlib.suppress(RuntimeError):
                     asyncio.run_coroutine_threadsafe(restart_session(), self._loop)
@@ -273,11 +369,17 @@ class WinRTBackend(STTBackend):
             status = (await recognizer.compile_constraints_async()).status
         except Exception as e:
             logger.error("WinRT grammar compilation failed: %s", e)
+            self._init_success = False
+            self._init_error = f"grammar compilation failed: {e}"
+            self._init_done.set()
             on_partial("", True)
             return
 
         if status != SpeechRecognitionResultStatus.SUCCESS:
             logger.error("WinRT grammar compilation failed: %s", status)
+            self._init_success = False
+            self._init_error = f"grammar compilation status: {status}"
+            self._init_done.set()
             on_partial("", True)
             return
 
@@ -287,19 +389,28 @@ class WinRTBackend(STTBackend):
             _session_start_time = time.time()
         except OSError as e:
             winerr = getattr(e, "winerror", None)
-            if winerr == -2147199735:
+            if winerr == _WINERR_PRIVACY_POLICY:
                 logger.error("WinRT: Online speech recognition privacy policy not accepted.")
                 logger.error("Settings → Privacy & security → Speech → ON")
             else:
                 logger.error("WinRT start failed: %s", e)
+            self._init_success = False
+            self._init_error = f"session.start_async() failed: {e}"
+            self._init_done.set()
             on_partial("", True)
             return
         except Exception as e:
             logger.error("WinRT start failed: %s", e)
+            self._init_success = False
+            self._init_error = f"session.start_async() failed: {e}"
+            self._init_done.set()
             on_partial("", True)
             return
 
         logger.info("WinRT STT active — speak anytime")
+        self._init_success = True
+        self._init_error = ""
+        self._init_done.set()
         self._running = True
 
         # Keep alive until stop

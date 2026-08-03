@@ -132,7 +132,7 @@ class WhisperLocalBackend(STTBackend):
         except Exception as e:
             logger.error("Failed to start Whisper local streaming: %s", e)
             on_partial("", True)
-            return StreamHandle(self)
+            return None  # Falsy — lets the caller fall through to the next backend
 
     def health(self) -> bool:
         return _check_faster_whisper()
