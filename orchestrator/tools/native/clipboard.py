@@ -9,7 +9,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "copy_to_clipboard",
-                "description": "Copy text to the clipboard",
+                "description": "Copy a text string to the Windows clipboard so it can be pasted elsewhere. Use when the user asks to copy text for manual pasting.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -26,7 +26,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "read_clipboard",
-                "description": "Read the current text from the clipboard",
+                "description": "Read the current text content from the Windows clipboard and return it. Use when the user asks what is copied or to check clipboard contents.",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -34,7 +34,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "copy_image_to_clipboard",
-                "description": "Copy an image file to the Windows clipboard",
+                "description": "Copy an image file to the Windows clipboard as an image so it can be pasted into documents or chat apps. Use when the user asks to copy a picture for pasting.",
                 "parameters": {
                     "type": "object",
                     "properties": {

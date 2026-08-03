@@ -10,7 +10,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "ui_click",
-                "description": "Click at screen coordinates using C# SendInput (Win32)",
+                "description": "Click at the given screen coordinates by simulating a mouse click via the C# SendInput (Win32) bridge. Use when the user asks to click somewhere on their screen without a mouse.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -148,7 +148,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "ui_move_relative",
-                "description": "Move cursor relative to current position via C# SendInput",
+                "description": "Move the cursor by a relative offset (dx, dy) from its current position using the C# SendInput (Win32) bridge. Use when the user wants to nudge the mouse a small amount rather than jump to an absolute position.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -272,7 +272,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "ui_get_screen_size",
-                "description": "Get screen dimensions (width, height) via C# bridge",
+                "description": "Get the primary screen dimensions (width, height) in pixels via the C# bridge. Use when you need to compute coordinates or check the available screen area.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -283,7 +283,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "ui_focus_window",
-                "description": "Bring a window to the foreground by partial title matching",
+                "description": "Bring a window to the foreground by matching a partial title string using the C# bridge. Use when the user asks to switch to or focus a specific application window.",
                 "parameters": {
                     "type": "object",
                     "properties": {

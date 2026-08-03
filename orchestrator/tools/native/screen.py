@@ -9,7 +9,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "capture_screen",
-                "description": "Capture the entire screen and save to outputs folder",
+                "description": "Capture the entire screen and save it as an image in the outputs folder. Use when the user asks what is on their screen, for screenshots, or for visual inspection.",
                 "parameters": {
                     "type": "object",
                     "properties": {

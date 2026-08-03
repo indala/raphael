@@ -73,7 +73,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "delete_memory_entry",
-                "description": "Delete a specific key-value entry from any memory category.",
+                "description": "Delete a specific key-value entry from any long-term memory category (e.g. 'daily_task_memory', 'chat_memory'). Use when the user asks to forget or remove a stored fact.",
                 "parameters": {
                     "type": "object",
                     "properties": {

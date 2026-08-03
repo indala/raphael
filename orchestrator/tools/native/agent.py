@@ -153,7 +153,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_task_result",
-                "description": "Get the result of a completed sub-agent task by task_id.",
+                "description": "Get the final result and output of a completed sub-agent task by its task_id. Use when a delegated task has finished and the user wants to see what it produced.",
                 "parameters": {
                     "type": "object",
                     "properties": {

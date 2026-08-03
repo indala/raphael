@@ -236,7 +236,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "list_background_tasks",
-                "description": "List all recent background tasks and their current status.",
+                "description": "List all recent background tasks with their current status (pending, running, completed, failed). Use when the user asks what tasks are running in the background or to check progress.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },

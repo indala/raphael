@@ -271,7 +271,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "list_workflows",
-                "description": "List all saved workflows with descriptions and step counts.",
+                "description": "List all saved reusable workflows with their descriptions and step counts. Use when the user asks which workflows exist or to review saved automations.",
                 "parameters": {
                     "type": "object",
                     "properties": {},

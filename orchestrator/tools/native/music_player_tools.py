@@ -38,7 +38,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "play_playlist",
-                "description": "Play a saved playlist by name from the local library.",
+                "description": "Play a previously saved playlist by name from the local music library. Use when the user asks to play a specific playlist they created.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -98,7 +98,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "add_to_queue",
-                "description": "Add a song to the end of the current playback queue.",
+                "description": "Add a song to the end of the current playback queue. Use when the user wants a track queued to play after the current one.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -112,7 +112,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "clear_queue",
-                "description": "Remove all queued songs except the currently playing one.",
+                "description": "Remove all songs from the playback queue except the one currently playing. Use when the user wants to start fresh with their listening queue.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -137,7 +137,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "resume_music",
-                "description": "Resume playback of a paused song.",
+                "description": "Resume playing the currently paused song from where it stopped. Use when the user asks to continue music playback that was paused.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -145,7 +145,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "stop_music",
-                "description": "Stop music playback and clear the entire queue.",
+                "description": "Stop all music playback and clear the entire playback queue. Use when the user wants music to stop completely, not just pause.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -153,7 +153,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "next_song",
-                "description": "Skip to the next song in the queue.",
+                "description": "Skip the currently playing song and start the next song in the queue. Use when the user asks for the next track.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -161,7 +161,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "previous_song",
-                "description": "Go back to the previously played song.",
+                "description": "Go back and play the previously played song in the session. Use when the user asks to replay the last track.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -169,7 +169,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "seek_music",
-                "description": "Jump to a specific position in the current song.",
+                "description": "Jump to a specific time position (in seconds or mm:ss) in the currently playing song. Use when the user asks to seek or scrub within a track.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -221,7 +221,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "set_shuffle",
-                "description": "Enable or disable shuffle mode for the song queue.",
+                "description": "Enable or disable shuffle mode for the playback queue. Use when the user asks to turn shuffle on or off for their music.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -291,7 +291,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "remove_from_library",
-                "description": "Remove a song from the local music library by name.",
+                "description": "Permanently remove a song from the local music library by its name. Use when the user asks to delete a downloaded track from their library.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -306,7 +306,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "create_playlist",
-                "description": "Create a new empty playlist.",
+                "description": "Create a new, empty playlist with the given name. Use before adding songs when the user wants to organize music into a new playlist.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -320,7 +320,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "add_to_playlist",
-                "description": "Add a song to an existing playlist.",
+                "description": "Add a specific song to an existing playlist by playlist name and song name. Use when the user wants a track saved into a playlist.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -335,7 +335,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "delete_playlist",
-                "description": "Delete a playlist and all its contents.",
+                "description": "Permanently delete a playlist and every song in it. Use when the user asks to remove a playlist entirely from their library.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -349,7 +349,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "list_playlists",
-                "description": "List all saved playlists.",
+                "description": "List the names and contents of every saved playlist. Use when the user asks what playlists exist in their music library.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -372,7 +372,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "show_recently_played",
-                "description": "Show recently played songs.",
+                "description": "Show the most recently played songs, with an optional count limit. Use when the user asks what they have been listening to recently.",
                 "parameters": {
                     "type": "object",
                     "properties": {

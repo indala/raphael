@@ -21,7 +21,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_positions",
-                "description": "Get current intraday positions with P&L",
+                "description": "Get the user's current intraday (day trading) positions with P&L. Use when the user asks about their open day trades or how much they are up or down today.",
                 "parameters": {
                     "type": "object",
                     "properties": {},

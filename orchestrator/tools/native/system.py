@@ -53,7 +53,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "open_url",
-                "description": "Open a URL in the default web browser",
+                "description": "Open a full URL (http/https) in the user's default web browser via the Windows shell. Use when the user asks to open a website or web link.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -70,7 +70,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "run_command",
-                "description": "Run a system command and return the output",
+                "description": "Run a shell/system command and return its captured output (truncated to 2000 chars, 25s timeout). Use when the user asks to execute a terminal command or check system information.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -87,7 +87,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "get_system_volume",
-                "description": "Get the current Windows system master volume level (0-100)",
+                "description": "Get the current Windows system master volume level as a percentage (0-100) via pycaw. Use when the user asks what the volume is set to or wants to know the current loudness.",
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -98,7 +98,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "set_system_volume",
-                "description": "Set the Windows system master volume level",
+                "description": "Set the Windows system master volume level to a value between 0 and 100 percent via pycaw. Use when the user asks to turn the volume up, down, mute, or set it to a specific level.",
                 "parameters": {
                     "type": "object",
                     "properties": {
