@@ -198,6 +198,14 @@ iscc raphael.iss
 
 ---
 
+## Installation & Code Trust
+
+Because this is a developer preview release, the installer is signed with a self-signed developer certificate. When installing:
+* **Option A:** Click **"More info"** on the Windows SmartScreen warning, and select **"Run anyway"**.
+* **Option B:** Download `raphael_public.cer` along with the installer and follow the instructions in [HOW_TO_INSTALL.md](HOW_TO_INSTALL.md) to trust the certificate globally.
+
+---
+
 ## License
 
 This project is licensed under the MIT License.
