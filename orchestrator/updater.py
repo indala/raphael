@@ -129,7 +129,7 @@ def download_installer(
     if dest_dir is None:
         dest_dir = Path(tempfile.gettempdir()) / "raphael_update"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / asset["name"]
+    dest_path: Path = dest_dir / asset["name"]
 
     logger.info("Downloading %s ...", asset["url"])
 

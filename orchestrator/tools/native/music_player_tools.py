@@ -5,6 +5,7 @@ or ``RecentlyPlayed`` classes.
 """
 
 import logging
+from pathlib import Path
 
 from audio.music_library import PlaylistManager, RecentlyPlayed
 from audio.music_player import MusicPlayer, SongEntry
@@ -392,7 +393,7 @@ def play_song(song_name: str) -> str:
     return str(_player().play_song(song_name))
 
 
-def _match_local_song_file(title: str, local_files: list) -> object | None:
+def _match_local_song_file(title: str, local_files: list[Path]) -> Path | None:
     """Find the downloaded file for a saved playlist song, if any.
 
     yt-dlp writes ``<title>_<videoID>.mp3``, so compare significant words
@@ -426,7 +427,6 @@ def play_playlist(playlist_name: str, shuffle: bool = False) -> str:
     if is_persistent:
         # Saved playlists download songs to DATA_DIR/music/<name>/ for offline
         # playback; prefer those local files over re-streaming from YouTube.
-        from pathlib import Path
         import config
         playlist_dir = Path(getattr(config, "DATA_DIR", ".")) / "music" / playlist_name
         local = list(playlist_dir.glob("*")) if playlist_dir.exists() else []
