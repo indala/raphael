@@ -57,12 +57,14 @@ def _prompt_referenced_tools() -> set[str]:
     return set(_SNAKE_CASE_RE.findall(prompt)) - _PROMPT_NON_TOOL_IDENTIFIERS
 
 
-def audit_tool_registry() -> list[str]:
+def audit_tool_registry(schemas: list[dict] | None = None) -> list[str]:
     """Return a list of tool-system integrity warnings.
 
     An empty list means the registry is healthy. Every warning is a
-    human-actionable message, e.g. "PHANTOM TOOL: ..." or
-    "UNREACHABLE TOOL: ...".
+    human-actionable message, e.g. "[PHANTOM TOOL]: ..." or
+    "[UNREACHABLE TOOL]: ...". The optional `schemas` is used by tests to
+    exercise the weak-description detection with synthetic data; when
+    omitted the live tool registry is audited.
     """
     warnings: list[str] = []
 
@@ -71,7 +73,7 @@ def audit_tool_registry() -> list[str]:
     except Exception as e:  # pragma: no cover - defensive boot path
         return [f"Tool registry unreachable: {e}"]
 
-    all_schemas = get_tool_schemas()
+    all_schemas = schemas if schemas is not None else get_tool_schemas()
     schema_names = {s["function"]["name"] for s in all_schemas}
     # get_tool_map() can include names without a schema; the model only ever
     # sees schema-backed tools, so those count as unregistered.
@@ -94,7 +96,7 @@ def audit_tool_registry() -> list[str]:
             )
 
     # 2. Unreachable tools
-    exposed = set()
+    exposed: set[str] = set()
     for names in DOMAIN_TOOL_MAP.values():
         exposed.update(names)
     exposed.update(CORE_FALLBACK_TOOLS)

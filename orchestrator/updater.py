@@ -10,11 +10,11 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import tempfile
 import threading
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,7 +115,7 @@ def find_installer_asset(release: ReleaseInfo) -> dict | None:
 def download_installer(
     release: ReleaseInfo,
     dest_dir: Path | None = None,
-    progress_callback: callable | None = None,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> Path | None:
     """Download the installer exe to a local temp directory.
 
@@ -164,7 +164,7 @@ def apply_update(installer_path: Path) -> None:
 # ── background check (for GUI mode) ───────────────────────────────────────
 
 
-def _check_in_background(on_update_found: callable) -> None:
+def _check_in_background(on_update_found: Callable[[ReleaseInfo], None]) -> None:
     """Run ``check_for_update`` in a daemon thread.
 
     *on_update_found* is called on the **main thread** with the

@@ -46,8 +46,7 @@ from orchestrator.log_utils import (
 )
 from orchestrator.plugin import get_hooks
 from orchestrator.policy import evaluate_tool_call, permission_message
-from orchestrator.subagents import get_tools_for_query
-from orchestrator.tools import get_filtered_schemas, get_tool_map, get_tool_schemas
+from orchestrator.tools import get_tool_map, get_tool_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -1044,7 +1043,7 @@ class RaphaelOrchestrator:
 
             # Include recent conversation so the check knows what was just
             # discussed and doesn't repeat it.
-            recent_context = []
+            recent_context: list[dict[str, str]] = []
             budget = 1500
             for m in self.history[-6:]:
                 content = m.get("content")

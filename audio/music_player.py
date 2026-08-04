@@ -658,7 +658,9 @@ class MusicPlayer:
                             entry.stream_proc.kill()
                         entry.stream_proc = None
                         logger.info("Fallback: downloading '%s' instead of streaming.", entry.title)
-                        self._download_single(entry)
+                        downloaded = self._download_single(entry.title)
+                        if downloaded is not None:
+                            entry = downloaded
                         if entry.filepath is None:
                             logger.warning("Fallback download failed for '%s', skipping.", entry.title)
                             with self._lock:
@@ -936,10 +938,11 @@ class MusicPlayer:
             if result is False:
                 # Adaptive streaming fell back — download instead
                 logger.info("Playlist item %d: falling back to download.", index + 1)
-                self._resolve_local(q)
-                if entry.filepath is None:
-                    self._download_single(entry)
-                if entry.filepath is not None:
+                resolved = self._resolve_local(q)
+                if resolved is None or resolved.filepath is None:
+                    resolved = self._download_single(q)
+                if resolved is not None and resolved.filepath is not None:
+                    entry.filepath = resolved.filepath
                     self._download_and_decode(entry)
         except Exception as e:
             logger.error("Playlist item %d failed: %s", index, e)

@@ -37,10 +37,15 @@ def test_no_prompt_references_unregistered(warnings):
 
 
 def test_weak_description_check_fires():
-    """The weak-description check must actually detect short descriptions."""
-    warnings = audit_tool_registry()
+    """The weak-description check must actually detect short descriptions.
+
+    Injected schemas drive the detection logic directly so the check is
+    proven to fire regardless of how the live registry evolves over time.
+    """
+    warnings = audit_tool_registry(
+        schemas=[{"function": {"name": "t_short", "description": "too short"}}]
+    )
     weak = [w for w in warnings if _kind(w) == "WEAK DESCRIPTION"]
-    assert weak, "expected at least one WEAK DESCRIPTION warning"
-    # Sanity: known-short tools must be flagged (they are under the threshold).
-    assert any("'list_playlists'" in w for w in weak)
+    assert weak, "expected a WEAK DESCRIPTION warning for a short schema"
+    assert any("'t_short'" in w for w in weak)
     assert MIN_DESCRIPTION_LENGTH == 60

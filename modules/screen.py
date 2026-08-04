@@ -49,7 +49,7 @@ def capture_screen(output_path: str | None = None) -> str:
     # Fall back to mss
     import mss
     try:
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             sct.shot(output=output_path)
         return output_path
     except Exception as e:
