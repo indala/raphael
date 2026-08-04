@@ -48,6 +48,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Decode Code Signing PFX Certificate
+        shell: pwsh
+        run: |
+          $pfxBase64 = "${{ secrets.CERT_PFX_BASE64 }}"
+          if ($pfxBase64) {
+              [IO.File]::WriteAllBytes("$pwd/raphael_codesign.pfx", [Convert]::FromBase64String($pfxBase64))
+              Write-Host "PFX certificate decoded successfully."
+          } else {
+              Write-Host "WARNING: CERT_PFX_BASE64 secret is not set. Build will skip signing."
+          }
+
       - name: Build with PyInstaller
         run: python build_app.py
 
@@ -70,24 +81,45 @@ jobs:
           name: raphael-dist
           path: dist/Raphael/
 
+      - name: Decode Code Signing PFX Certificate
+        shell: pwsh
+        run: |
+          $pfxBase64 = "${{ secrets.CERT_PFX_BASE64 }}"
+          if ($pfxBase64) {
+              [IO.File]::WriteAllBytes("$pwd/raphael_codesign.pfx", [Convert]::FromBase64String($pfxBase64))
+              Write-Host "PFX certificate decoded successfully."
+          } else {
+              Write-Host "WARNING: CERT_PFX_BASE64 secret is not set. Package will skip signing."
+          }
+
       - name: Install Inno Setup
         run: choco install innosetup -y
 
       - name: Build installer
         run: iscc raphael.iss
 
-      # TODO: Add code signing when ready (Azure Trusted Signing, SignPath, or self-signed)
-      # - name: Sign installer
-      #   run: signtool.exe sign /f "certificate.pfx" /p "${{ secrets.CERT_PASSWORD }}" /t "http://timestamp.digicert.com" /fd SHA256 Output/RaphaelSetup.exe
+      - name: Sign installer
+        shell: pwsh
+        run: |
+          $pfxPath = "$pwd/raphael_codesign.pfx"
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits" -Filter "signtool.exe" -Recurse | Select-Object -First 1
+          if ($signtool -and (Test-Path $pfxPath)) {
+              Write-Host "Signing installer..."
+              & $signtool.FullName sign /f $pfxPath /p "RaphaelCert123" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 installer/Raphael_Setup.exe
+              Write-Host "Installer signed successfully."
+          } else {
+              Write-Host "WARNING: SignTool or PFX file not found. Skipping installer signing."
+          }
 
-      - name: Zip installer for release
-        run: Compress-Archive -Path Output/RaphaelSetup.exe -DestinationPath Output/RaphaelSetup.zip
+      - name: Zip installer and release assets
+        run: |
+          Compress-Archive -Path installer/Raphael_Setup.exe, raphael_public.cer, HOW_TO_INSTALL.md -DestinationPath installer/Raphael_${{ github.ref_name }}_Release.zip -Force
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: raphael-installer
-          path: Output/RaphaelSetup.zip
+          path: installer/Raphael_${{ github.ref_name }}_Release.zip
 
   release:
     needs: package
@@ -105,5 +137,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Output/RaphaelSetup.zip
+          files: Output/Raphael_*_Release.zip
           generate_release_notes: true
