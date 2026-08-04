@@ -8,7 +8,7 @@
 ; Output: installer\Raphael_Setup.exe
 
 #define MyAppName "Raphael"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.0.1"
 #define MyAppPublisher "Raphael Contributors"
 #define MyAppURL "https://github.com/indala/raphael"
 #define MyAppExeName "Raphael.exe"

@@ -21,3 +21,6 @@ installer/
 
 # Playwright MCP cache
 .playwright-mcp/
+
+# Private signing keys
+*.pfx

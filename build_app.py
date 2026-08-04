@@ -39,6 +39,45 @@ def check_pyinstaller():
         return False
 
 
+def sign_binary(file_path: Path):
+    """Sign the binary using signtool.exe if the PFX is present."""
+    pfx_path = ROOT_DIR / "raphael_codesign.pfx"
+    # Find signtool.exe from standard Windows Kit location
+    signtool = Path(r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.18362.0\x64\signtool.exe")
+    if not signtool.exists():
+        # Fallback search if version differs
+        sdk_bin = Path(r"C:\Program Files (x86)\Windows Kits\10\bin")
+        if sdk_bin.exists():
+            matches = list(sdk_bin.glob("**/x64/signtool.exe"))
+            if matches:
+                signtool = matches[0]
+
+    if pfx_path.exists() and signtool.exists():
+        print(f"[Build App] Signing {file_path.name}...")
+        cmd = [
+            str(signtool), "sign",
+            "/f", str(pfx_path),
+            "/p", "RaphaelCert123",
+            "/fd", "SHA256",
+            "/tr", "http://timestamp.digicert.com",
+            "/td", "SHA256",
+            str(file_path)
+        ]
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode == 0:
+                print(f"[Build App] Successfully signed {file_path.name}")
+            else:
+                print(f"[Build App] WARNING: SignTool failed: {res.stderr}")
+        except Exception as e:
+            print(f"[Build App] WARNING: Skipping signing: {e}")
+    else:
+        if not pfx_path.exists():
+            print("[Build App] No signature applied (raphael_codesign.pfx not found).")
+        elif not signtool.exists():
+            print("[Build App] WARNING: signtool.exe not found. Code signing skipped.")
+
+
 def run_pyinstaller_build(clean: bool = False):
     """Execute PyInstaller build with raphael.spec."""
     spec_path = ROOT_DIR / "raphael.spec"
@@ -55,6 +94,9 @@ def run_pyinstaller_build(clean: bool = False):
         res = subprocess.run(cmd, text=True)
         if res.returncode == 0:
             exe_path = ROOT_DIR / "dist" / "Raphael" / "Raphael.exe"
+            # Apply code signature
+            sign_binary(exe_path)
+            
             print("\n" + "=" * 60)
             print(" BUILD SUCCESSFUL!")
             print(f" Executable: {exe_path}")
