@@ -53,7 +53,36 @@ public static class WindowManager
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
     private const uint WM_CLOSE = 0x0010;
+    private const int SW_HIDE = 0;
+    private const int SW_SHOW = 5;
+    private const int GWL_EXSTYLE = -20;
+    private const long WS_EX_LAYERED = 0x00080000;
+    private const uint LWA_ALPHA = 0x2;
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private static readonly IntPtr HWND_NOTOPMOST = new(-2);
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT
@@ -250,5 +279,72 @@ public static class WindowManager
         if (GetWindowRect(hWnd, out RECT rect))
             return [rect.Left, rect.Top, rect.Right, rect.Bottom];
         return null;
+    }
+
+    /// <summary>
+    /// Move a window to (x, y), preserving its current size.
+    /// </summary>
+    public static bool MoveWindow(string title, int x, int y)
+    {
+        var hWnd = FindWindowByTitle(title);
+        if (hWnd == IntPtr.Zero) return false;
+        if (!GetWindowRect(hWnd, out RECT rect)) return false;
+        return MoveWindow(hWnd, x, y, rect.Right - rect.Left, rect.Bottom - rect.Top, true);
+    }
+
+    /// <summary>
+    /// Resize a window to (width, height), preserving its current position.
+    /// </summary>
+    public static bool ResizeWindow(string title, int width, int height)
+    {
+        var hWnd = FindWindowByTitle(title);
+        if (hWnd == IntPtr.Zero) return false;
+        if (!GetWindowRect(hWnd, out RECT rect)) return false;
+        return MoveWindow(hWnd, rect.Left, rect.Top, width, height, true);
+    }
+
+    /// <summary>
+    /// Pin a window to the top of the z-order (always on top) or release it.
+    /// </summary>
+    public static bool SetAlwaysOnTop(string title, bool onTop)
+    {
+        var hWnd = FindWindowByTitle(title);
+        if (hWnd == IntPtr.Zero) return false;
+        return SetWindowPos(hWnd, onTop ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
+    /// <summary>
+    /// Set a window's opacity to a value in [0, 1] by enabling WS_EX_LAYERED + LWA_ALPHA.
+    /// </summary>
+    public static bool SetOpacity(string title, double opacity)
+    {
+        var hWnd = FindWindowByTitle(title);
+        if (hWnd == IntPtr.Zero) return false;
+        var opacity01 = Math.Clamp(opacity, 0.0, 1.0);
+        var exStyle = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64();
+        if ((exStyle & WS_EX_LAYERED) == 0)
+            SetWindowLongPtr(hWnd, GWL_EXSTYLE, (IntPtr)(exStyle | WS_EX_LAYERED));
+        byte alpha = (byte)Math.Round(opacity01 * 255.0);
+        return SetLayeredWindowAttributes(hWnd, 0, alpha, LWA_ALPHA);
+    }
+
+    /// <summary>
+    /// Hide (or, on some apps, minimize) a window by title.
+    /// </summary>
+    public static bool HideWindow(string title)
+    {
+        var hWnd = FindWindowByTitle(title);
+        if (hWnd == IntPtr.Zero) return false;
+        return ShowWindow(hWnd, SW_HIDE);
+    }
+
+    /// <summary>
+    /// Show a hidden window by title.
+    /// </summary>
+    public static bool ShowWindowByTitle(string title)
+    {
+        var hWnd = FindWindowByTitle(title);
+        if (hWnd == IntPtr.Zero) return false;
+        return ShowWindow(hWnd, SW_SHOW);
     }
 }

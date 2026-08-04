@@ -11,13 +11,19 @@ import subprocess
 import webbrowser
 from pathlib import Path
 
+from modules import process_control as _proc
+from modules import services as _services
+
 # Optional C# hybrid bridge
 try:
     from hybrid.bridge import CShellHelper as CsShell
+    from hybrid.bridge import CEnvVarHelper as CsEnv
     from hybrid.bridge import is_available
     _CS_SHELL = is_available()
+    _CS_ENV = _CS_SHELL
 except ImportError:
     _CS_SHELL = False
+    _CS_ENV = False
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +202,127 @@ def get_schemas() -> list[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "service_list",
+                "description": "List all Windows services with their name, display name, running state, and startup type. Use when the user asks which services are running, installed, or how a particular service is configured.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "service_start",
+                "description": "Start a stopped Windows service by its exact service name (for example 'Spooler', not the display name). Reports whether the start succeeded or failed with the underlying error.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The exact Windows service name to start",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "service_stop",
+                "description": "Stop a running Windows service by its exact service name (for example 'Spooler'). Reports whether the stop succeeded or failed with the underlying error.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The exact Windows service name to stop",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "env_get",
+                "description": "Read the value of a Windows environment variable. Checks the user scope first, then the process and machine scopes as fallback. Use when the user asks what an environment variable is currently set to.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The environment variable name to read",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "env_set",
+                "description": "Create or update a Windows environment variable in the user scope. Passing an empty value deletes the variable. Use when the user wants to set, change, or permanently remove an environment variable.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The environment variable name to set",
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The new value; pass an empty string to delete the variable",
+                        },
+                    },
+                    "required": ["name", "value"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "process_kill",
+                "description": "Terminate a process by its PID. Refuses to kill protected processes such as Raphael's own process chain, terminals, or editors. Use when the user asks to end or kill a running program.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pid": {
+                            "type": "integer",
+                            "description": "The process ID (PID) to kill",
+                        },
+                    },
+                    "required": ["pid"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "process_wait",
+                "description": "Wait for a process identified by its PID to exit, up to a configurable timeout in seconds (default 30). Reports whether the process exited or is still running after the timeout elapsed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pid": {
+                            "type": "integer",
+                            "description": "The process ID (PID) to wait on",
+                        },
+                        "timeout_s": {
+                            "type": "integer",
+                            "description": "How long to wait in seconds (default 30)",
+                        },
+                    },
+                    "required": ["pid"],
                 },
             },
         },
@@ -475,3 +602,56 @@ def set_system_volume(level: int) -> str:
         return "pycaw not available — cannot set system volume"
     except Exception as e:
         return f"Failed to set system volume: {e}"
+
+
+def service_list() -> str:
+    """List all Windows services with status and startup type."""
+    return _services.service_list()
+
+
+def service_start(name: str) -> str:
+    """Start a stopped Windows service by service name."""
+    return _services.service_start(name)
+
+
+def service_stop(name: str) -> str:
+    """Stop a running Windows service by service name."""
+    return _services.service_stop(name)
+
+
+def env_get(name: str) -> str:
+    """Read a Windows environment variable (user scope first)."""
+    if not name or not name.strip():
+        return "Please provide an environment variable name."
+    name = name.strip()
+    if not _CS_ENV:
+        return "C# bridge not available — cannot read environment variables"
+    value = CsEnv.Get(name)
+    if value is None:
+        return f"Environment variable '{name}' is not set."
+    return f"{name}={value}"
+
+
+def env_set(name: str, value: str) -> str:
+    """Create, update, or delete a user-scope Windows environment variable."""
+    if not name or not name.strip():
+        return "Please provide an environment variable name."
+    name = name.strip()
+    if not _CS_ENV:
+        return "C# bridge not available — cannot set environment variables"
+    err = CsEnv.Set(name, value)
+    if err:
+        return f"Failed to set environment variable '{name}': {err}"
+    if value == "":
+        return f"Deleted environment variable '{name}'."
+    return f"Set environment variable '{name}' to '{value}'."
+
+
+def process_kill(pid: int) -> str:
+    """Terminate a process by PID, guarding protected processes."""
+    return _proc.process_kill(pid)
+
+
+def process_wait(pid: int, timeout_s: int = 30) -> str:
+    """Wait up to timeout_s for a process to exit."""
+    return _proc.process_wait(pid, timeout_s)

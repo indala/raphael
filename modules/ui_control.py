@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Optional C# hybrid bridge — all cursor/keyboard ops REQUIRE this
 try:
-    from hybrid.bridge import CWindowManager as CsWin, CInputSimulator as CsInput, CMonitorInfo as CsMon, CSystemState as CsState, CExplorerHelper as CsExplorer, is_available
+    from hybrid.bridge import CWindowManager as CsWin, CInputSimulator as CsInput, CMonitorInfo as CsMon, CSystemState as CsState, CExplorerHelper as CsExplorer, CPowerManager as CsPower, CToastNotifier as CsToast, CKeyboardState as CsKeyboard, CDisplayBrightness as CsDisplay, is_available
     _CS_OK = is_available()
     _CS_WIN = _CS_OK
     _CS_INPUT = _CS_OK
@@ -313,6 +313,66 @@ def close_window(title: str) -> bool:
     return False
 
 
+def minimize_window(title: str) -> bool:
+    """Minimize a window by partial title. Uses C# bridge if available, else pygetwindow."""
+    if _CS_WIN:
+        try:
+            r = CsWin.MinimizeWindow(title)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# MinimizeWindow failed: %s", e)
+    try:
+        wins = gw.getWindowsWithTitle(title)
+        if wins:
+            wins[0].minimize()
+            return True
+        return False
+    except Exception as e:
+        logger.error("Minimize window failed: %s", e)
+        return False
+
+
+def maximize_window(title: str) -> bool:
+    """Maximize a window by partial title. Uses C# bridge if available, else pygetwindow."""
+    if _CS_WIN:
+        try:
+            r = CsWin.MaximizeWindow(title)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# MaximizeWindow failed: %s", e)
+    try:
+        wins = gw.getWindowsWithTitle(title)
+        if wins:
+            wins[0].maximize()
+            return True
+        return False
+    except Exception as e:
+        logger.error("Maximize window failed: %s", e)
+        return False
+
+
+def get_window_rect(title: str) -> dict | None:
+    """Get a window's on-screen position and size (left, top, right, bottom)."""
+    if _CS_WIN:
+        try:
+            r = CsWin.GetWindowRect(title)
+            if r:
+                return {"left": r[0], "top": r[1], "right": r[2], "bottom": r[3]}
+        except Exception as e:
+            logger.warning("C# GetWindowRect failed: %s", e)
+    try:
+        wins = gw.getWindowsWithTitle(title)
+        if wins:
+            w = wins[0]
+            return {"left": w.left, "top": w.top, "right": w.right, "bottom": w.bottom}
+        return None
+    except Exception as e:
+        logger.error("Get window rect failed: %s", e)
+        return None
+
+
 def is_protected_window(title: str) -> bool:
     """Check if a window title matches a protected process."""
     windows = enum_windows()
@@ -357,3 +417,226 @@ def get_explorer_selection() -> dict | None:
         except Exception as e:
             logger.warning("C# GetActiveExplorerSelection failed: %s", e)
     return None
+
+
+def move_window(title: str, x: int, y: int) -> bool:
+    """Move a window by title to screen coordinates (x, y), preserving its size."""
+    if _CS_WIN:
+        try:
+            r = CsWin.MoveWindow(title, x, y)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# MoveWindow failed: %s", e)
+    return False
+
+
+def resize_window(title: str, width: int, height: int) -> bool:
+    """Resize a window by title to (width, height), preserving its position."""
+    if _CS_WIN:
+        try:
+            r = CsWin.ResizeWindow(title, width, height)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# ResizeWindow failed: %s", e)
+    return False
+
+
+def set_always_on_top(title: str, on_top: bool) -> bool:
+    """Pin a window to the top of the z-order or release it."""
+    if _CS_WIN:
+        try:
+            r = CsWin.SetAlwaysOnTop(title, on_top)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# SetAlwaysOnTop failed: %s", e)
+    return False
+
+
+def set_window_opacity(title: str, opacity: float) -> bool:
+    """Set a window's opacity to a value in [0, 1] (1 = fully opaque)."""
+    if _CS_WIN:
+        try:
+            r = CsWin.SetOpacity(title, opacity)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# SetOpacity failed: %s", e)
+    return False
+
+
+def hide_window(title: str) -> bool:
+    """Hide a window by title so it disappears from the taskbar and desktop."""
+    if _CS_WIN:
+        try:
+            r = CsWin.HideWindow(title)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# HideWindow failed: %s", e)
+    return False
+
+
+def show_window(title: str) -> bool:
+    """Show a previously hidden window by title."""
+    if _CS_WIN:
+        try:
+            r = CsWin.ShowWindow(title)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# ShowWindow failed: %s", e)
+    return False
+
+
+def power_sleep() -> bool:
+    """Put the machine into sleep (suspend-to-RAM) via the C# PowerManager."""
+    if _CS_WIN:
+        try:
+            r = CsPower.Sleep()
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# power_sleep failed: %s", e)
+    return False
+
+
+def power_hibernate() -> bool:
+    """Hibernate the machine (suspend-to-disk) via the C# PowerManager."""
+    if _CS_WIN:
+        try:
+            r = CsPower.Hibernate()
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# power_hibernate failed: %s", e)
+    return False
+
+
+def power_lock() -> bool:
+    """Lock the workstation via the C# PowerManager."""
+    if _CS_WIN:
+        try:
+            r = CsPower.Lock()
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# power_lock failed: %s", e)
+    return False
+
+
+def power_shutdown(confirm: bool = False) -> bool:
+    """Shut down the machine. Requires explicit confirm=True; otherwise no-op."""
+    if not confirm:
+        return False
+    if _CS_WIN:
+        try:
+            r = CsPower.Shutdown(True)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# power_shutdown failed: %s", e)
+    return False
+
+
+def power_reboot(confirm: bool = False) -> bool:
+    """Restart the machine. Requires explicit confirm=True; otherwise no-op."""
+    if not confirm:
+        return False
+    if _CS_WIN:
+        try:
+            r = CsPower.Reboot(True)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# power_reboot failed: %s", e)
+    return False
+
+
+def toast_show(title: str, message: str) -> bool:
+    """Show a desktop toast notification with the given title and message."""
+    if _CS_WIN:
+        try:
+            r = CsToast.Show(title, message)
+            if r is not None:
+                return bool(r)
+        except Exception as e:
+            logger.warning("C# toast_show failed: %s", e)
+    return False
+
+
+def key_is_pressed(key: str) -> bool:
+    """Check whether a key is currently held down via C# GetAsyncKeyState."""
+    if not _CS_WIN:
+        logger.error("C# bridge not available — cannot check key state")
+        return False
+    try:
+        info = CsKeyboard.IsPressed(key)
+        return bool(info and info.get("pressed"))
+    except Exception as e:
+        logger.error("C# IsPressed failed: %s", e)
+        return False
+
+
+def caps_lock_state() -> bool:
+    """Caps Lock toggle state via C# GetKeyState."""
+    if not _CS_WIN:
+        logger.error("C# bridge not available — cannot check key state")
+        return False
+    try:
+        r = CsKeyboard.CapsLock()
+        return bool(r)
+    except Exception as e:
+        logger.error("C# CapsLock failed: %s", e)
+        return False
+
+
+def num_lock_state() -> bool:
+    """Num Lock toggle state via C# GetKeyState."""
+    if not _CS_WIN:
+        logger.error("C# bridge not available — cannot check key state")
+        return False
+    try:
+        r = CsKeyboard.NumLock()
+        return bool(r)
+    except Exception as e:
+        logger.error("C# NumLock failed: %s", e)
+        return False
+
+
+def monitor_get_dpi() -> dict | None:
+    """Get the primary monitor's effective DPI via C# GetDpiForMonitor."""
+    if not _CS_WIN:
+        logger.error("C# bridge not available — cannot query DPI")
+        return None
+    try:
+        return CsDisplay.GetDpi()  # type: ignore[no-any-return]
+    except Exception as e:
+        logger.error("C# GetDpi failed: %s", e)
+        return None
+
+
+def get_brightness() -> dict | None:
+    """Get the primary monitor's brightness range via C# dxva2."""
+    if not _CS_WIN:
+        logger.error("C# bridge not available — cannot query brightness")
+        return None
+    try:
+        return CsDisplay.GetBrightness()  # type: ignore[no-any-return]
+    except Exception as e:
+        logger.error("C# GetBrightness failed: %s", e)
+        return None
+
+
+def set_brightness(level: int) -> dict | None:
+    """Set the primary monitor's brightness to a level in [0,100] via C# dxva2."""
+    if not _CS_WIN:
+        logger.error("C# bridge not available — cannot set brightness")
+        return None
+    try:
+        return CsDisplay.SetBrightness(level)  # type: ignore[no-any-return]
+    except Exception as e:
+        logger.error("C# SetBrightness failed: %s", e)
+        return None

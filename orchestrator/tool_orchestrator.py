@@ -27,6 +27,8 @@ class ToolDomain(str, enum.Enum):
     MUSIC = "music"
     FILES = "files"
     DESKTOP = "desktop"
+    SYSTEM = "system"
+    POWER = "power"
     WEB = "web"
     EMAIL = "email"
     MEMORY = "memory"
@@ -42,6 +44,8 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "set_system_volume",
         "get_system_volume",
         "check_tool_health",
+        "play_audio_file",
+        "stop_audio",
     ),
     ToolDomain.MUSIC: (
         "play_song",
@@ -89,6 +93,9 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "get_clipboard_files",
         "save_output",
         "generate_chart",
+        "create_shortcut",
+        "recycle_bin_get",
+        "recycle_bin_empty",
     ),
     ToolDomain.DESKTOP: (
         "desktop_snapshot_v2",
@@ -109,6 +116,15 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "ui_focus_window",
         "ui_enum_windows",
         "ui_close_window",
+        "ui_minimize_window",
+        "ui_maximize_window",
+        "ui_get_window_rect",
+        "ui_move_window",
+        "ui_resize_window",
+        "ui_set_always_on_top",
+        "ui_set_window_opacity",
+        "ui_hide_window",
+        "ui_show_window",
         "ui_double_click",
         "ui_drag",
         "ui_get_explorer_selection",
@@ -122,6 +138,29 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "ui_scroll",
         "ui_scroll_at",
         "ui_smooth_move",
+        "key_is_pressed",
+        "caps_lock_state",
+        "num_lock_state",
+        "monitor_get_dpi",
+        "get_brightness",
+        "set_brightness",
+    ),
+    ToolDomain.SYSTEM: (
+        "service_list",
+        "service_start",
+        "service_stop",
+        "env_get",
+        "env_set",
+        "process_kill",
+        "process_wait",
+    ),
+    ToolDomain.POWER: (
+        "power_sleep",
+        "power_hibernate",
+        "power_lock",
+        "power_shutdown",
+        "power_reboot",
+        "show_toast",
     ),
     ToolDomain.WEB: (
         "web_search",
@@ -198,6 +237,14 @@ DOMAIN_PATTERNS: Dict[ToolDomain, re.Pattern] = {
         r"\b(window|click|type|keypress|screenshot|taskbar|tray|process|app|open app|close window|monitor|screen)\b",
         re.IGNORECASE,
     ),
+    ToolDomain.SYSTEM: re.compile(
+        r"\b(service|services|environment variable|env var|env|process|pid)\b",
+        re.IGNORECASE,
+    ),
+    ToolDomain.POWER: re.compile(
+        r"\b(power|shutdown|shut down|restart|reboot|sleep|hibernate|lock screen|lock workstation|toast|notification)\b",
+        re.IGNORECASE,
+    ),
     ToolDomain.WEB: re.compile(
         r"\b(search|find online|browse|website|url|http|weather|forecast|google|fetch|web)\b",
         re.IGNORECASE,
@@ -239,6 +286,8 @@ CORE_FALLBACK_TOOLS: Tuple[str, ...] = (
     "open_url",
     "get_weather",
     "speak",
+    "tts_list_voices",
+    "tts_set_voice",
     "save_output",
     "list_tasks",
     "check_task",

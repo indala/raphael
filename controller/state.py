@@ -22,6 +22,7 @@ class RuntimeState:
         self._tts_enabled = config.TTS_ENABLED
         self._memory_needs_consolidation = False
         self._tts_speaking = False
+        self._tts_voice: str | None = None
         # Audio device state (seeded from real hardware at startup)
         self._speaker_muted = False
         self._speaker_volume = 100
@@ -123,6 +124,18 @@ class RuntimeState:
     def tts_speaking(self, value: bool):
         with self._lock:
             self._tts_speaking = bool(value)
+
+    # ── TTS voice override (persisted choice used by speak) ──
+
+    @property
+    def tts_voice(self) -> str | None:
+        with self._lock:
+            return self._tts_voice  # type: ignore[no-any-return]
+
+    @tts_voice.setter
+    def tts_voice(self, value: str | None):
+        with self._lock:
+            self._tts_voice = (value or "").strip() or None
 
     # ── Speaker volume (0-100) ──
 

@@ -453,6 +453,172 @@ class CWindowManager:
         r = LazyBridge.call("window_get_rect", title)
         return (r["left"], r["top"], r["right"], r["bottom"]) if r else None
 
+    @staticmethod
+    def MoveWindow(title: str, x: int, y: int) -> bool | None:
+        """Move a window by title to (x, y), preserving its size."""
+        return LazyBridge.call("window_move", title, x, y)
+
+    @staticmethod
+    def ResizeWindow(title: str, width: int, height: int) -> bool | None:
+        """Resize a window by title to (width, height), preserving its position."""
+        return LazyBridge.call("window_resize", title, width, height)
+
+    @staticmethod
+    def SetAlwaysOnTop(title: str, on_top: bool) -> bool | None:
+        """Pin a window to the top of the z-order or release it."""
+        return LazyBridge.call("window_set_always_on_top", title, on_top)
+
+    @staticmethod
+    def SetOpacity(title: str, opacity: float) -> bool | None:
+        """Set a window's opacity to a value in [0, 1]."""
+        return LazyBridge.call("window_set_opacity", title, opacity)
+
+    @staticmethod
+    def HideWindow(title: str) -> bool | None:
+        """Hide a window by title."""
+        return LazyBridge.call("window_hide", title)
+
+    @staticmethod
+    def ShowWindow(title: str) -> bool | None:
+        """Show a previously hidden window by title."""
+        return LazyBridge.call("window_show", title)
+
+
+class CPowerManager:
+    """System power control via the C# PowerManager (PowrProf/User32)."""
+
+    @staticmethod
+    def Sleep() -> bool | None:
+        return LazyBridge.call("power_sleep")
+
+    @staticmethod
+    def Hibernate() -> bool | None:
+        return LazyBridge.call("power_hibernate")
+
+    @staticmethod
+    def Lock() -> bool | None:
+        return LazyBridge.call("power_lock")
+
+    @staticmethod
+    def Shutdown(confirm: bool = False) -> bool | None:
+        return LazyBridge.call("power_shutdown", confirm)
+
+    @staticmethod
+    def Reboot(confirm: bool = False) -> bool | None:
+        return LazyBridge.call("power_reboot", confirm)
+
+
+class CToastNotifier:
+    """Desktop toast notifications via the C# ToastNotifier (WinRT)."""
+
+    @staticmethod
+    def Show(title: str, message: str) -> bool | None:
+        return LazyBridge.call("toast_show", title, message)
+
+
+class CServiceManager:
+    """Windows service enumeration and control via the C# ServiceHelper (WMI)."""
+
+    @staticmethod
+    def List() -> list[dict] | None:
+        return LazyBridge.call("service_list")
+
+    @staticmethod
+    def Start(name: str) -> str | None:
+        """Start a service. Returns None on success or an error message."""
+        return LazyBridge.call("service_start", name)
+
+    @staticmethod
+    def Stop(name: str) -> str | None:
+        """Stop a service. Returns None on success or an error message."""
+        return LazyBridge.call("service_stop", name)
+
+
+class CProcessHelper:
+    """Process lifecycle control via the C# ProcessHelper (System.Diagnostics)."""
+
+    @staticmethod
+    def Kill(pid: int) -> str | None:
+        """Kill a process by PID. Returns None on success or an error message."""
+        return LazyBridge.call("process_kill", pid)
+
+    @staticmethod
+    def Wait(pid: int, timeout_ms: int = 30000) -> dict | None:
+        """Wait for a process to exit; returns {'exited': bool, 'error': str | None}."""
+        return LazyBridge.call("process_wait", pid, timeout_ms)
+
+
+class CShortcutHelper:
+    """Create .lnk shortcuts via the C# ShortcutHelper (WScript.Shell COM)."""
+
+    @staticmethod
+    def Create(link_path: str, target: str, arguments: str = "", working_dir: str = "", description: str = "") -> str | None:
+        """Create a shortcut. Returns None on success or an error message."""
+        return LazyBridge.call("shortcut_create", link_path, target, arguments, working_dir, description)
+
+
+class CRecycleBin:
+    """Recycle Bin query and empty via the C# RecycleBin (Shell32)."""
+
+    @staticmethod
+    def Get() -> dict | None:
+        """Query item count and size. Returns {'hr', 'item_count', 'size_bytes'}."""
+        return LazyBridge.call("recycle_bin_get")
+
+    @staticmethod
+    def Empty(confirm: bool = False) -> dict | None:
+        """Empty the recycle bin; no-op unless confirm=True."""
+        return LazyBridge.call("recycle_bin_empty", confirm)
+
+
+class CKeyboardState:
+    """Keyboard key-state queries via the C# KeyboardState (User32)."""
+
+    @staticmethod
+    def IsPressed(key: str) -> dict | None:
+        """Whether a key is currently held. Returns {'pressed', 'error'}."""
+        return LazyBridge.call("key_is_pressed", key)
+
+    @staticmethod
+    def CapsLock() -> bool | None:
+        return LazyBridge.call("key_caps_lock")
+
+    @staticmethod
+    def NumLock() -> bool | None:
+        return LazyBridge.call("key_num_lock")
+
+
+class CDisplayBrightness:
+    """Monitor DPI and brightness via the C# DisplayBrightness (shcore/dxva2)."""
+
+    @staticmethod
+    def GetDpi() -> dict | None:
+        """Primary-monitor DPI. Returns {'dpi_x', 'dpi_y'} or {'error'}."""
+        return LazyBridge.call("monitor_get_dpi")
+
+    @staticmethod
+    def GetBrightness() -> dict | None:
+        """Current brightness range. Returns {'min', 'current', 'max'} or {'error'}."""
+        return LazyBridge.call("brightness_get")
+
+    @staticmethod
+    def SetBrightness(level: int) -> dict | None:
+        """Set brightness to 0-100. Returns {'level'} or {'error'}."""
+        return LazyBridge.call("brightness_set", level)
+
+
+class CEnvVarHelper:
+    """User environment variable read/write via the C# EnvVarHelper (BCL)."""
+
+    @staticmethod
+    def Get(name: str) -> str | None:
+        return LazyBridge.call("env_get", name)
+
+    @staticmethod
+    def Set(name: str, value: str) -> str | None:
+        """Set a user env var; empty value deletes it. Returns None on success."""
+        return LazyBridge.call("env_set", name, value)
+
 
 class CClipboardHelper:
     @staticmethod

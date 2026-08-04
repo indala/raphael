@@ -2,6 +2,8 @@
 
 import config
 from actions.file_processor import process_file as _process_file
+from modules import recycle_bin as _recycle_bin
+from modules import shortcuts as _shortcuts
 
 # ── Read-before-edit tracking ───────────────────────────────────────
 _read_file_registry: set[str] = set()
@@ -157,6 +159,67 @@ def get_schemas() -> list[dict]:
                         }
                     },
                     "required": ["filename"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_shortcut",
+                "description": "Create a Windows .lnk shortcut file that points to a target application or file. Optionally sets launch arguments, a working directory, and a description. Use when the user wants a desktop or Start Menu shortcut.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "link_path": {
+                            "type": "string",
+                            "description": "Full path where the .lnk file should be created (e.g. 'C:/Users/admin/Desktop/My App.lnk')",
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "Full path to the application or file the shortcut launches",
+                        },
+                        "arguments": {
+                            "type": "string",
+                            "description": "Optional command-line arguments passed to the target",
+                        },
+                        "working_dir": {
+                            "type": "string",
+                            "description": "Optional working directory for the launched process",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Optional human-readable description shown in the shortcut's tooltip",
+                        },
+                    },
+                    "required": ["link_path", "target"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "recycle_bin_get",
+                "description": "Query the Windows Recycle Bin and report how many items it contains and their total size in bytes across all drives. Use when the user asks how full the recycle bin is or wants to check its contents before emptying.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "recycle_bin_empty",
+                "description": "Permanently empty the Windows Recycle Bin, deleting every item across all drives. Destructive and irreversible: it requires an explicit confirm=true argument and otherwise does nothing at all.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "confirm": {
+                            "type": "boolean",
+                            "description": "Must be true to actually empty the recycle bin; false or omitted is a no-op",
+                        },
+                    },
+                    "required": [],
                 },
             },
         },
@@ -383,4 +446,25 @@ def edit_file(file_path: str, old_string: str, new_string: str, replace_all: boo
         return f"Edited {path} ({size} bytes) — replaced '{old_preview}' with '{new_preview}'"
     except Exception as e:
         return f"Error editing file {file_path}: {e}"
+
+
+def create_shortcut(
+    link_path: str,
+    target: str,
+    arguments: str = "",
+    working_dir: str = "",
+    description: str = "",
+) -> str:
+    """Create a .lnk shortcut pointing at a target application or file."""
+    return _shortcuts.create_shortcut(link_path, target, arguments, working_dir, description)
+
+
+def recycle_bin_get() -> str:
+    """Query the recycle bin's item count and total size."""
+    return _recycle_bin.recycle_bin_get()
+
+
+def recycle_bin_empty(confirm: bool = False) -> str:
+    """Empty the recycle bin; no-op unless confirm=True."""
+    return _recycle_bin.recycle_bin_empty(confirm)
 

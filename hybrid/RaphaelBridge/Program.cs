@@ -222,6 +222,110 @@ void ProcessRequest(Request req)
                     Respond(req.Id, new { left = rect[0], top = rect[1], right = rect[2], bottom = rect[3] });
                 break;
             }
+        case "window_move":
+            Respond(req.Id, WindowManager.MoveWindow(req.GetArg<string>(0) ?? "", req.GetArg<int>(1), req.GetArg<int>(2)));
+            break;
+        case "window_resize":
+            Respond(req.Id, WindowManager.ResizeWindow(req.GetArg<string>(0) ?? "", req.GetArg<int>(1), req.GetArg<int>(2)));
+            break;
+        case "window_set_always_on_top":
+            Respond(req.Id, WindowManager.SetAlwaysOnTop(req.GetArg<string>(0) ?? "", req.GetArg<bool>(1)));
+            break;
+        case "window_set_opacity":
+            Respond(req.Id, WindowManager.SetOpacity(req.GetArg<string>(0) ?? "", req.GetArg<double>(1)));
+            break;
+        case "window_hide":
+            Respond(req.Id, WindowManager.HideWindow(req.GetArg<string>(0) ?? ""));
+            break;
+        case "window_show":
+            Respond(req.Id, WindowManager.ShowWindowByTitle(req.GetArg<string>(0) ?? ""));
+            break;
+
+        // ── PowerManager ──
+        case "power_sleep":
+            Respond(req.Id, PowerManager.Sleep());
+            break;
+        case "power_hibernate":
+            Respond(req.Id, PowerManager.Hibernate());
+            break;
+        case "power_lock":
+            Respond(req.Id, PowerManager.Lock());
+            break;
+        case "power_shutdown":
+            Respond(req.Id, PowerManager.Shutdown(req.GetArg<bool>(0)));
+            break;
+        case "power_reboot":
+            Respond(req.Id, PowerManager.Reboot(req.GetArg<bool>(0)));
+            break;
+
+        // ── ToastNotifier ──
+        case "toast_show":
+            Respond(req.Id, ToastNotifier.Show(req.GetArg<string>(0) ?? "", req.GetArg<string>(1) ?? ""));
+            break;
+
+        // ── ServiceHelper (WMI) ──
+        case "service_list":
+            Respond(req.Id, ServiceHelper.List());
+            break;
+        case "service_start":
+            Respond(req.Id, ServiceHelper.Start(req.GetArg<string>(0) ?? ""));
+            break;
+        case "service_stop":
+            Respond(req.Id, ServiceHelper.Stop(req.GetArg<string>(0) ?? ""));
+            break;
+
+        // ── EnvVarHelper (BCL) ──
+        case "env_get":
+            Respond(req.Id, EnvVarHelper.Get(req.GetArg<string>(0) ?? ""));
+            break;
+        case "env_set":
+            Respond(req.Id, EnvVarHelper.Set(req.GetArg<string>(0) ?? "", req.GetArg<string>(1) ?? ""));
+            break;
+
+        // ── ProcessHelper (System.Diagnostics) ──
+        case "process_kill":
+            Respond(req.Id, ProcessHelper.Kill(req.GetArg<int>(0)));
+            break;
+        case "process_wait":
+            Respond(req.Id, ProcessHelper.Wait(req.GetArg<int>(0), req.GetArg<int>(1) > 0 ? req.GetArg<int>(1) : 30000));
+            break;
+
+        // ── ShortcutHelper (WScript.Shell COM) ──
+        case "shortcut_create":
+            Respond(req.Id, ShortcutHelper.Create(
+                req.GetArg<string>(0) ?? "", req.GetArg<string>(1) ?? "",
+                req.GetArg<string>(2) ?? "", req.GetArg<string>(3) ?? "", req.GetArg<string>(4) ?? ""));
+            break;
+
+        // ── RecycleBin (Shell32) ──
+        case "recycle_bin_get":
+            Respond(req.Id, RecycleBin.Get());
+            break;
+        case "recycle_bin_empty":
+            Respond(req.Id, RecycleBin.Empty(req.GetArg<bool>(0)));
+            break;
+
+        // ── KeyboardState (User32) ──
+        case "key_is_pressed":
+            Respond(req.Id, KeyboardState.IsPressed(req.GetArg<string>(0) ?? ""));
+            break;
+        case "key_caps_lock":
+            Respond(req.Id, KeyboardState.CapsLock());
+            break;
+        case "key_num_lock":
+            Respond(req.Id, KeyboardState.NumLock());
+            break;
+
+        // ── DisplayBrightness (shcore + dxva2) ──
+        case "monitor_get_dpi":
+            Respond(req.Id, DisplayBrightness.GetDpi());
+            break;
+        case "brightness_get":
+            Respond(req.Id, DisplayBrightness.GetBrightness());
+            break;
+        case "brightness_set":
+            Respond(req.Id, DisplayBrightness.SetBrightness(req.GetArg<uint>(0)));
+            break;
 
         // ── Clipboard (all static) ──
         case "clipboard_copy_text":

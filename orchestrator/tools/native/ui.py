@@ -327,6 +327,183 @@ def get_schemas() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "ui_minimize_window",
+                "description": "Minimize a window so it collapses to the taskbar. Provide a partial window title (for example the app name) to match. Useful when decluttering the desktop or before focusing another window.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to minimize",
+                        },
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_maximize_window",
+                "description": "Maximize a window to fill the entire screen. Provide a partial window title (for example the app name) to match. Useful when the user wants a window expanded to full size.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to maximize",
+                        },
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_get_window_rect",
+                "description": "Get a window's current on-screen position and size as left, top, right, bottom pixel coordinates. Provide a partial window title. Useful for computing click targets or verifying window layout.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to inspect",
+                        },
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_move_window",
+                "description": "Move a window to a new on-screen position by matching a partial window title. Provide the target X and Y screen coordinates (top-left corner), the window's size is preserved. Useful for arranging windows on the monitor.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to move",
+                        },
+                        "x": {
+                            "type": "integer",
+                            "description": "Target left coordinate",
+                        },
+                        "y": {
+                            "type": "integer",
+                            "description": "Target top coordinate",
+                        },
+                    },
+                    "required": ["title", "x", "y"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_resize_window",
+                "description": "Resize a window to a new width and height (in pixels) by matching a partial window title. The window's top-left position is preserved. Useful for setting windows to specific dimensions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to resize",
+                        },
+                        "width": {
+                            "type": "integer",
+                            "description": "New width in pixels",
+                        },
+                        "height": {
+                            "type": "integer",
+                            "description": "New height in pixels",
+                        },
+                    },
+                    "required": ["title", "width", "height"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_set_always_on_top",
+                "description": "Pin a window to stay on top of all other windows (always-on-top) or release it, by matching a partial window title. Pass on_top true to pin it above everything, false to let it sit normally in the z-order.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title",
+                        },
+                        "on_top": {
+                            "type": "boolean",
+                            "description": "True to keep the window always on top, false to release",
+                        },
+                    },
+                    "required": ["title", "on_top"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_set_window_opacity",
+                "description": "Set a window's transparency to a value between 0.0 (fully invisible) and 1.0 (fully opaque), by matching a partial window title. Useful for semi-transparent overlays or previews. Uses the Win32 layered window API.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title",
+                        },
+                        "opacity": {
+                            "type": "number",
+                            "description": "Opacity from 0.0 (invisible) to 1.0 (opaque)",
+                        },
+                    },
+                    "required": ["title", "opacity"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_hide_window",
+                "description": "Hide a window by matching a partial title so it disappears from the desktop and taskbar, without closing it. The window keeps running in the background. Use ui_show_window to bring it back.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to hide",
+                        },
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui_show_window",
+                "description": "Show a previously hidden window by matching a partial title, restoring it to the desktop and taskbar. Pairs with ui_hide_window. No effect (and returns an error) if no matching window is found.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Partial window title to show",
+                        },
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "ui_get_monitors",
                 "description": "Get information about all connected monitors: index, bounds, work area (excluding taskbar), and primary flag. Useful for understanding the physical screen layout before positioning windows or taking screenshots.",
                 "parameters": {
@@ -365,6 +542,84 @@ def get_schemas() -> list[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "key_is_pressed",
+                "description": "Check whether a specific keyboard key (for example shift, ctrl, alt, or any letter or number) is currently being held down right now using GetAsyncKeyState. Use when the user asks if a key is being pressed or to detect held modifier keys.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "Key name to check, e.g. 'shift', 'ctrl', 'alt', 'a', 'enter'",
+                        },
+                    },
+                    "required": ["key"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "caps_lock_state",
+                "description": "Report whether Caps Lock is currently toggled on or off using GetKeyState. Use when the user asks whether Caps Lock is enabled, such as before typing or pasting text.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "num_lock_state",
+                "description": "Report whether Num Lock is currently toggled on or off using GetKeyState. Use when the user asks whether Num Lock is enabled before typing numbers on the numeric keypad.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "monitor_get_dpi",
+                "description": "Get the primary monitor's effective DPI scaling (dots per inch) on both the horizontal and vertical axes via the Windows shcore API. Use to reason about display scaling when computing pixel-perfect coordinates.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_brightness",
+                "description": "Get the primary monitor's current brightness along with its minimum and maximum supported levels via the Windows dxva2 API. Use when the user asks how bright their display is or to report brightness alongside other settings.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "set_brightness",
+                "description": "Set the primary monitor's brightness to a level between 0 and 100 percent using the Windows dxva2 API. Requires a display that supports DDC/CI brightness control such as external monitors or this laptop's panel.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "level": {
+                            "type": "integer",
+                            "description": "Target brightness from 0 (minimum) to 100 (maximum)",
+                        },
+                    },
+                    "required": ["level"],
                 },
             },
         },
@@ -511,6 +766,75 @@ def ui_close_window(title: str) -> str:
     if _close_window(title):
         return f"Closed window '{title}'."
     return f"Failed to close window '{title}'."
+
+
+def ui_minimize_window(title: str) -> str:
+    """Minimize a window by partial title match."""
+    if _ui_control.minimize_window(title):
+        return f"Minimized window matching title: '{title}'."
+    return f"Failed to minimize window matching title: '{title}'."
+
+
+def ui_maximize_window(title: str) -> str:
+    """Maximize a window by partial title match."""
+    if _ui_control.maximize_window(title):
+        return f"Maximized window matching title: '{title}'."
+    return f"Failed to maximize window matching title: '{title}'."
+
+
+def ui_get_window_rect(title: str) -> str:
+    """Get a window's position and size by partial title match."""
+    rect = _ui_control.get_window_rect(title)
+    if not rect:
+        return f"Failed to get rect for window matching title: '{title}'."
+    return (
+        f"Window rect for '{title}': left={rect['left']} top={rect['top']} "
+        f"right={rect['right']} bottom={rect['bottom']} "
+        f"(width={rect['right'] - rect['left']}, height={rect['bottom'] - rect['top']})"
+    )
+
+
+def ui_move_window(title: str, x: int, y: int) -> str:
+    """Move a window to a new screen position (x, y), preserving its size."""
+    if _ui_control.move_window(title, x, y):
+        return f"Moved window '{title}' to ({x}, {y})."
+    return f"Failed to move window matching title: '{title}' to ({x}, {y})."
+
+
+def ui_resize_window(title: str, width: int, height: int) -> str:
+    """Resize a window to (width, height), preserving its position."""
+    if _ui_control.resize_window(title, width, height):
+        return f"Resized window '{title}' to {width}x{height}."
+    return f"Failed to resize window matching title: '{title}' to {width}x{height}."
+
+
+def ui_set_always_on_top(title: str, on_top: bool) -> str:
+    """Pin a window to the top of the z-order or release it."""
+    if _ui_control.set_always_on_top(title, on_top):
+        state = "always-on-top" if on_top else "back to normal"
+        return f"Set window '{title}' to {state}."
+    return f"Failed to set always-on-top flag on window matching title: '{title}'."
+
+
+def ui_set_window_opacity(title: str, opacity: float) -> str:
+    """Set a window's opacity to a value in [0, 1]."""
+    if _ui_control.set_window_opacity(title, opacity):
+        return f"Set window '{title}' opacity to {opacity:.2f}."
+    return f"Failed to set opacity on window matching title: '{title}'."
+
+
+def ui_hide_window(title: str) -> str:
+    """Hide a window by partial title match."""
+    if _ui_control.hide_window(title):
+        return f"Hidden window matching title: '{title}'."
+    return f"Failed to hide window matching title: '{title}'."
+
+
+def ui_show_window(title: str) -> str:
+    """Show a previously hidden window by partial title match."""
+    if _ui_control.show_window(title):
+        return f"Shown window matching title: '{title}'."
+    return f"Failed to show window matching title: '{title}'."
 
 
 def ui_get_monitors() -> str:
@@ -688,3 +1012,52 @@ def desktop_snapshot() -> str:
         parts.append(f"Clipboard files: (error: {e})")
 
     return "\n\n".join(parts)
+
+
+def key_is_pressed(key: str) -> str:
+    """Check whether a keyboard key is currently held down."""
+    if _ui_control.key_is_pressed(key):
+        return f"Key '{key}' is currently pressed."
+    return f"Key '{key}' is not pressed."
+
+
+def caps_lock_state() -> str:
+    """Report whether Caps Lock is toggled on or off."""
+    state = "ON" if _ui_control.caps_lock_state() else "OFF"
+    return f"Caps Lock is {state}."
+
+
+def num_lock_state() -> str:
+    """Report whether Num Lock is toggled on or off."""
+    state = "ON" if _ui_control.num_lock_state() else "OFF"
+    return f"Num Lock is {state}."
+
+
+def monitor_get_dpi() -> str:
+    """Get the primary monitor's effective DPI."""
+    dpi = _ui_control.monitor_get_dpi()
+    if not dpi:
+        return "Failed to get monitor DPI (C# bridge unavailable)."
+    if "error" in dpi:
+        return f"Failed to get monitor DPI: {dpi['error']}"
+    return f"Primary monitor DPI: {dpi.get('dpi_x')} x {dpi.get('dpi_y')}"
+
+
+def get_brightness() -> str:
+    """Get the primary monitor's current brightness."""
+    b = _ui_control.get_brightness()
+    if not b:
+        return "Failed to get monitor brightness (C# bridge unavailable)."
+    if "error" in b:
+        return f"Failed to get monitor brightness: {b['error']}"
+    return f"Brightness: {b.get('current')}% (range {b.get('min')}-{b.get('max')})"
+
+
+def set_brightness(level: int) -> str:
+    """Set the primary monitor's brightness to a level in [0, 100]."""
+    result = _ui_control.set_brightness(level)
+    if not result:
+        return "Failed to set monitor brightness (C# bridge unavailable)."
+    if "error" in result:
+        return f"Failed to set brightness: {result['error']}"
+    return f"Brightness set to {level}%."

@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 124
+    assert len(executor.tool_map) == 159
 
 
 def test_tool_executor_has_expected_tools():
@@ -76,6 +76,19 @@ def test_tool_executor_has_expected_tools():
         "ui_get_screen_size", "ui_double_click", "ui_scroll", "ui_scroll_at",
         "ui_drag", "ui_smooth_move", "ui_move_relative",
         "ui_mouse_down", "ui_mouse_up",
+        # Window state & deep control (C# bridge)
+        "ui_minimize_window", "ui_maximize_window", "ui_get_window_rect",
+        "ui_move_window", "ui_resize_window",
+        "ui_set_always_on_top", "ui_set_window_opacity",
+        "ui_hide_window", "ui_show_window",
+        # Audio playback
+        "play_audio_file", "stop_audio",
+        # TTS voicing
+        "tts_list_voices", "tts_set_voice",
+        # Power & notifications (C# bridge)
+        "power_sleep", "power_hibernate", "power_lock",
+        "power_shutdown", "power_reboot",
+        "show_toast",
         # Desktop inspection
         "desktop_processes", "desktop_environment", "desktop_tray",
         "desktop_taskbar", "desktop_network", "desktop_system_info",
@@ -103,6 +116,14 @@ def test_tool_executor_has_expected_tools():
         "show_recently_played",
         "create_playlist", "delete_playlist", "list_playlists",
         "add_to_playlist", "save_playlist",
+        # Phase D: services, env vars, process lifecycle
+        "service_list", "service_start", "service_stop",
+        "env_get", "env_set", "process_kill", "process_wait",
+        # Phase D: shortcuts + recycle bin
+        "create_shortcut", "recycle_bin_get", "recycle_bin_empty",
+        # Phase D: keyboard state + DPI/brightness
+        "key_is_pressed", "caps_lock_state", "num_lock_state",
+        "monitor_get_dpi", "get_brightness", "set_brightness",
     }
     missing = expected - set(executor.tool_map.keys())
     extra = set(executor.tool_map.keys()) - expected

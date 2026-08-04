@@ -113,6 +113,14 @@ from .native import desktop as _mod_desktop
 
 _register(_mod_desktop)
 
+from .native import audio as _mod_audio
+
+_register(_mod_audio)
+
+from .native import power as _mod_power
+
+_register(_mod_power)
+
 # ── Generated Tools (AI-created, dynamically loaded) ──
 # Production tools are loaded; draft and archived are not (prevents conflicts)
 import contextlib
@@ -185,6 +193,10 @@ PARALLEL_SAFE_TOOLS: set[str] = {
     "get_current_song",
     "list_goals",
     "save_output",
+    "service_list", "env_get",
+    "key_is_pressed", "caps_lock_state", "num_lock_state",
+    "monitor_get_dpi", "get_brightness",
+    "recycle_bin_get",
 }
 
 

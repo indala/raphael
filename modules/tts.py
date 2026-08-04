@@ -281,7 +281,8 @@ def speak(text: str, voice: str | None = None,
 
     from modules.tts_registry import TTSRegistry
     backend_name = (backend or getattr(config, "TTS_BACKEND", "edge-tts")).lower()  # type: ignore[union-attr]
-    voice = voice or getattr(config, "TTS_VOICE", "en-US-JennyNeural")
+    # Runtime voice override takes precedence, then config default
+    voice = voice or state.tts_voice or getattr(config, "TTS_VOICE", "en-US-JennyNeural")
 
     # Map legacy backend names
     BACKEND_ALIASES = {
