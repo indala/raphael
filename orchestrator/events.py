@@ -75,6 +75,8 @@ class ToolResultEvent(StreamEvent):
     duration_ms: float = 0.0
     round: int = 0
     truncated: bool = False
+    agent: str = "raphael"
+    args: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -85,6 +87,8 @@ class ToolErrorEvent(StreamEvent):
     error: str = ""
     duration_ms: float = 0.0
     round: int = 0
+    agent: str = "raphael"
+    args: dict = field(default_factory=dict)
 
 
 # ── Progress ─────────────────────────────────────────────────────
@@ -114,6 +118,7 @@ class TaskCompleteEvent(StreamEvent):
     type: str = "task_complete"
     task_id: str = ""
     result: str = ""
+    proactive: bool = False
 
 
 @dataclass

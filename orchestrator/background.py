@@ -73,6 +73,22 @@ class BackgroundTask:
         }
 
 
+def publish_status_changed(task: BackgroundTask) -> None:
+    """Publish a typed ``task.status_changed`` event from a BackgroundTask.
+
+    Never raises: status events are observability side-effects and must not
+    break the task lifecycle if the bus is unavailable.
+    """
+    try:
+        from orchestrator.event_bus import TASK_STATUS_CHANGED, EventBus
+        from orchestrator.event_payloads import TaskStatusChangedPayload
+        EventBus().publish_typed(
+            TASK_STATUS_CHANGED, TaskStatusChangedPayload(**task.to_dict())
+        )
+    except Exception:
+        pass
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 _MAX_HISTORY = 50
@@ -110,7 +126,12 @@ class BackgroundTaskRunner:
 
     def _subscribe_to_events(self):
         try:
-            from orchestrator.event_bus import AGENT_DELEGATED, TOOL_EXECUTED, TOOL_FAILED, EventBus
+            from orchestrator.event_bus import (
+                AGENT_DELEGATED,
+                TOOL_EXECUTED,
+                TOOL_FAILED,
+                EventBus,
+            )
             bus = EventBus()
             bus.subscribe(TOOL_EXECUTED, self._on_bus_event)
             bus.subscribe(TOOL_FAILED, self._on_bus_event)
@@ -130,11 +151,7 @@ class BackgroundTaskRunner:
                     elif event == "agent.delegated":
                         task.current_action = f"Delegating to: {data.get('to_agent')}"
                     # Publish status change
-                    try:
-                        from orchestrator.event_bus import EventBus
-                        EventBus().publish("task.status_changed", **task.to_dict())
-                    except Exception:
-                        pass
+                    publish_status_changed(task)
 
     def get_thread_task_id(self, thread_id: int) -> str | None:
         with self._lock:
@@ -176,11 +193,7 @@ class BackgroundTaskRunner:
             task.future = future
 
         logger.info("Background task %s submitted: %s(%s)", task_id, tool_name, args)
-        try:
-            from orchestrator.event_bus import EventBus
-            EventBus().publish("task.status_changed", **task.to_dict())
-        except Exception:
-            pass
+        publish_status_changed(task)
         return task_id
 
     def submit(
@@ -209,11 +222,7 @@ class BackgroundTaskRunner:
             task.future = future
 
         logger.info("Background task %s submitted: %s", task_id, label)
-        try:
-            from orchestrator.event_bus import EventBus
-            EventBus().publish("task.status_changed", **task.to_dict())
-        except Exception:
-            pass
+        publish_status_changed(task)
         return task_id
 
     def cancel(self, task_id: str) -> bool:
@@ -227,11 +236,7 @@ class BackgroundTaskRunner:
                 task.status = TaskStatus.CANCELED
                 task.finished = time.time()
             logger.info("Background task %s canceled", task_id)
-            try:
-                from orchestrator.event_bus import EventBus
-                EventBus().publish("task.status_changed", **task.to_dict())
-            except Exception:
-                pass
+            publish_status_changed(task)
             return True
         return False
 
@@ -284,11 +289,7 @@ class BackgroundTaskRunner:
             task.started = time.time()
             self._thread_to_task[tid] = task_id
 
-        try:
-            from orchestrator.event_bus import EventBus
-            EventBus().publish("task.status_changed", **task.to_dict())
-        except Exception:
-            pass
+        publish_status_changed(task)
 
         try:
             if self._executor is None:
@@ -308,11 +309,7 @@ class BackgroundTaskRunner:
             with self._lock:
                 task.finished = time.time()
                 self._thread_to_task.pop(tid, None)
-            try:
-                from orchestrator.event_bus import EventBus
-                EventBus().publish("task.status_changed", **task.to_dict())
-            except Exception:
-                pass
+            publish_status_changed(task)
             if on_done:
                 try:
                     on_done(task)
@@ -339,11 +336,7 @@ class BackgroundTaskRunner:
             task.started = time.time()
             self._thread_to_task[tid] = task_id
 
-        try:
-            from orchestrator.event_bus import EventBus
-            EventBus().publish("task.status_changed", **task.to_dict())
-        except Exception:
-            pass
+        publish_status_changed(task)
 
         try:
             result = fn(*args, **kwargs)
@@ -361,11 +354,7 @@ class BackgroundTaskRunner:
             with self._lock:
                 task.finished = time.time()
                 self._thread_to_task.pop(tid, None)
-            try:
-                from orchestrator.event_bus import EventBus
-                EventBus().publish("task.status_changed", **task.to_dict())
-            except Exception:
-                pass
+            publish_status_changed(task)
             if on_done:
                 try:
                     on_done(task)

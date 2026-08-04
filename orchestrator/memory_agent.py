@@ -11,6 +11,7 @@ from datetime import datetime
 
 from memory.memory_manager import load_memory, update_memory
 from orchestrator.event_bus import MEMORY_UPDATED, EventBus
+from orchestrator.event_payloads import MemoryUpdatedPayload
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,10 @@ def run_memory_agent(user_text: str, assistant_text: str) -> None:
                 updates = json.loads(text)
                 if isinstance(updates, dict) and updates:
                     update_memory(updates)
-                    EventBus().publish(MEMORY_UPDATED, source="organizer", updates=list(updates.keys()))
+                    EventBus().publish_typed(
+                        MEMORY_UPDATED,
+                        MemoryUpdatedPayload(source="organizer", updates=list(updates.keys())),
+                    )
                     logger.info("Memory Organizer successfully saved background updates: %s", list(updates.keys()))
                     # Signal that memory needs consolidation (throttled to once per 5 min)
                     from controller.state import state

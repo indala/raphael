@@ -21,6 +21,10 @@ import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from orchestrator.event_payloads import EventPayload
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +42,11 @@ TOOL_BROKEN = "tool.broken"
 # Memory
 MEMORY_UPDATED = "memory.updated"
 
-# Agent / Delegation
+# Agent / Delegation / Tasks
 AGENT_DELEGATED = "agent.delegated"
 TASK_COMPLETED = "task.completed"
+TASK_STATUS_CHANGED = "task.status_changed"
+TASK_FINISHED = "task.finished"
 
 # System
 SYSTEM_STARTUP = "system.startup"
@@ -112,6 +118,34 @@ class EventBus:
             wildcard = list(self._subscribers.get("*", []))
         for handler in handlers + wildcard:
             self._pool.submit(self._run_handler, handler, event, data)  # type: ignore[union-attr]
+
+    def publish_typed(self, event_name: str, payload: EventPayload) -> None:
+        """Publish an event with a typed :class:`EventPayload`.
+
+        The payload class is validated against the ``EVENT_PAYLOAD`` registry
+        before dispatch: a mismatch (or an event with no registered payload) is
+        logged and the publish is dropped — it never raises, so a publisher
+        can't crash on a wrong payload. Delegates to :meth:`publish`, so
+        subscribers still receive ``(event_name, dict)`` unchanged.
+        """
+        from orchestrator.event_payloads import EVENT_PAYLOAD  # local import avoids a module cycle
+
+        expected = EVENT_PAYLOAD.get(event_name)
+        if expected is None:
+            logger.warning(
+                "No typed payload registered for event '%s'; publish dropped",
+                event_name,
+            )
+            return
+        if not isinstance(payload, expected):
+            logger.warning(
+                "Typed payload mismatch for '%s': expected %s, got %s; publish dropped",
+                event_name,
+                expected.__name__,
+                type(payload).__name__,
+            )
+            return
+        self.publish(event_name, **payload.to_dict())
 
     def _run_handler(self, handler: EventHandler, event: str, data: dict):
         """Execute a single handler, logging any error."""

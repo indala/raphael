@@ -14,6 +14,7 @@ import logging
 import threading
 
 from orchestrator.event_bus import AGENT_DELEGATED, TASK_COMPLETED, EventBus
+from orchestrator.event_payloads import AgentDelegatedPayload, TaskCompletedPayload
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,12 @@ def delegate_to_agent(agent_name: str, query: str) -> str:
     new_depth = _push_depth()
     logger.info("Delegating to agent '%s' (depth %d/%d): %s",
                 agent_name, new_depth, _MAX_DELEGATION_DEPTH, query)
-    EventBus().publish(AGENT_DELEGATED, from_agent="raphael",
-                        to_agent=agent_name, query=query, depth=new_depth)
+    EventBus().publish_typed(
+        AGENT_DELEGATED,
+        AgentDelegatedPayload(
+            from_agent="raphael", to_agent=agent_name, query=query, depth=new_depth
+        ),
+    )
     try:
         from orchestrator.agent_models import create_agent_llm
         from orchestrator.core import ToolExecutor
@@ -100,8 +105,15 @@ def delegate_to_agent(agent_name: str, query: str) -> str:
         executor = ToolExecutor()
 
         response = agent.run(query, llm, executor)
-        EventBus().publish(TASK_COMPLETED, from_agent="raphael",
-                            agent=agent_name, query=query, result=response[:200])
+        EventBus().publish_typed(
+            TASK_COMPLETED,
+            TaskCompletedPayload(
+                from_agent="raphael",
+                agent=agent_name,
+                query=query,
+                result=response[:200],
+            ),
+        )
         return response
     except Exception as e:
         logger.error("Delegation to '%s' failed: %s", agent_name, e)

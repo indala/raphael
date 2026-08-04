@@ -119,7 +119,6 @@ def cancel_task(task_id: str) -> str:
     import time
 
     from orchestrator.background import TaskStatus
-    from orchestrator.event_bus import EventBus
 
     runner = _runner()
     task = runner.get_task(task_id)
@@ -138,7 +137,8 @@ def cancel_task(task_id: str) -> str:
             task.error = "Stopped by user"
             task.finished = time.time()
         with contextlib.suppress(Exception):
-            EventBus().publish("task.status_changed", **task.to_dict())
+            from orchestrator.background import publish_status_changed
+            publish_status_changed(task)
         return f"Stop request sent to running task {task_id} ({task.label}). It will terminate shortly."
 
     return f"Task {task_id} is already in state '{task.status.value}' and cannot be canceled."

@@ -24,7 +24,15 @@ import contextlib
 import config
 from controller.state import state
 from orchestrator.background import BackgroundTask, init_runner
-from orchestrator.event_bus import TASK_COMPLETED, TOOL_EXECUTED, TOOL_FAILED, EventBus
+from orchestrator.event_adapter import stream_with_events
+from orchestrator.event_bus import (
+    TASK_COMPLETED,
+    TASK_FINISHED,
+    TOOL_EXECUTED,
+    TOOL_FAILED,
+    EventBus,
+)
+from orchestrator.event_payloads import TaskFinishedPayload
 from orchestrator.events import (
     InterruptedEvent,
     ProgressEvent,
@@ -846,13 +854,15 @@ class RaphaelOrchestrator:
         elif task.status.value == "failed":
             error_msg = task.error or "Unknown error"
             logger.info("Background task %s failed: %s", task.task_id, error_msg)
-            EventBus().publish(
-                "task.finished",
-                task_id=task.task_id,
-                label=label,
-                status="failed",
-                summary="",
-                error=error_msg
+            EventBus().publish_typed(
+                TASK_FINISHED,
+                TaskFinishedPayload(
+                    task_id=task.task_id,
+                    label=label,
+                    status="failed",
+                    summary="",
+                    error=error_msg,
+                ),
             )
 
     def _synthesize_and_present_result(self, task: BackgroundTask) -> None:
@@ -885,13 +895,15 @@ class RaphaelOrchestrator:
             summary = f"Background task '{label}' completed: {(task.result or '')[:300]}"
 
         logger.info("Background task %s completed successfully", task.task_id)
-        EventBus().publish(
-            "task.finished",
-            task_id=task.task_id,
-            label=label,
-            status="done",
-            summary=summary,
-            error=""
+        EventBus().publish_typed(
+            TASK_FINISHED,
+            TaskFinishedPayload(
+                task_id=task.task_id,
+                label=label,
+                status="done",
+                summary=summary,
+                error="",
+            ),
         )
 
     def set_ui_log(self, fn: Callable) -> None:
@@ -1553,6 +1565,10 @@ class RaphaelOrchestrator:
         """
         Process a user message through the LLM loop, yielding typed events.
 
+        Wraps :meth:`_process_message_events_raw` so the stream is the single
+        emitter: each yielded event is also published as a typed ``EventBus``
+        payload by :func:`orchestrator.event_adapter.stream_with_events`.
+
         Yields StreamEvent sub-types so that callers (UI, controller, API)
         can stream every stage of processing in real time:
         token chunks, tool starts/results, progress updates, and the final outcome.
@@ -1561,6 +1577,20 @@ class RaphaelOrchestrator:
             StreamEvent — sub-types include TokenEvent, ThinkingEvent,
             ToolStartEvent, ToolResultEvent, ToolErrorEvent, ProgressEvent,
             TaskCompleteEvent, TaskErrorEvent, InterruptedEvent.
+        """
+        return stream_with_events(self._process_message_events_raw(user_input, file_path=file_path))
+
+    def _process_message_events_raw(
+        self,
+        user_input: str,
+        file_path: str | None = None,
+    ) -> Generator[StreamEvent]:
+        """
+        Process a user message through the LLM loop, yielding typed events.
+
+        Raw event generator. Public callers should use
+        :meth:`process_message_events`, which wraps this stream with the
+        single-emitter adapter.
         """
         # ── Request tracking ───────────────────────────────────────
         set_request_id()
@@ -1572,7 +1602,7 @@ class RaphaelOrchestrator:
             log_event("Proactive Check")
             result = self._run_proactive_check(user_input)
             clear_request_id()
-            yield TaskCompleteEvent(result=result)
+            yield TaskCompleteEvent(result=result, proactive=True)
             return
 
         # Handle file drops
@@ -1783,22 +1813,17 @@ class RaphaelOrchestrator:
                     if result.startswith("Error:"):
                         yield ToolErrorEvent(
                             tool=tool_call.function.name, error=result, round=round_idx,
+                            agent="raphael",
+                            args=json.loads(tool_call.function.arguments)
+                                if tool_call.function.arguments else {},
                         )
                     else:
                         yield ToolResultEvent(
                             tool=tool_call.function.name, result=result[:500], round=round_idx,
-                            truncated=truncated,
+                            truncated=truncated, agent="raphael",
+                            args=json.loads(tool_call.function.arguments)
+                                if tool_call.function.arguments else {},
                         )
-
-                    EventBus().publish(
-                        TOOL_FAILED if result.startswith("Error:") else TOOL_EXECUTED,
-                        agent="raphael",
-                        tool=tool_call.function.name,
-                        args=json.loads(tool_call.function.arguments)
-                            if tool_call.function.arguments else {},
-                        result=result[:200],
-                        round=round_idx,
-                    )
 
                 # ── Update task progress for next LLM round ──
                 for tc in response.tool_calls:
@@ -1821,7 +1846,6 @@ class RaphaelOrchestrator:
                 }
                 if hasattr(response, "reasoning_content") and response.reasoning_content:
                     assistant_msg["reasoning_content"] = response.reasoning_content
-                EventBus().publish(TASK_COMPLETED, user_input=user_input, response=response.content[:200])
                 self.history.append(assistant_msg)
                 log_event("Text Response", f"{len(response.content)} chars")
                 self._finalize_task(_task_id, result=response.content)
@@ -1839,7 +1863,6 @@ class RaphaelOrchestrator:
             error_msg = "I encountered an issue processing your request."
         self._finalize_task(_task_id, error=error_msg)
 
-        EventBus().publish(TASK_COMPLETED, user_input=user_input, response=error_msg[:200])
         self.history.append({"role": "assistant", "content": error_msg})
         finalize_timeline()
         clear_request_id()

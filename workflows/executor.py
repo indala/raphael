@@ -3,7 +3,8 @@
 import logging
 import re
 
-from orchestrator.event_bus import EventBus, TASK_COMPLETED
+from orchestrator.event_bus import TASK_COMPLETED, EventBus
+from orchestrator.event_payloads import TaskCompletedPayload
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,9 @@ def execute_workflow(
     full = f"Workflow '{workflow_name}' completed.\n{summary}" if results else \
            f"Workflow '{workflow_name}' has no steps."
 
-    EventBus().publish(TASK_COMPLETED, workflow=workflow_name,
-                       steps=len(steps), results=step_results)
+    EventBus().publish_typed(
+        TASK_COMPLETED,
+        TaskCompletedPayload(workflow=workflow_name, steps=len(steps), results=step_results),
+    )
 
     return full

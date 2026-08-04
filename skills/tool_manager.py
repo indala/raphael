@@ -417,8 +417,9 @@ except Exception as e:
 
         # Reload registry
         try:
+            from orchestrator.event_bus import TOOL_CREATED, EventBus
+            from orchestrator.event_payloads import ToolRegistryChangedPayload
             from orchestrator.tools import reload_tools
-            from orchestrator.event_bus import EventBus, TOOL_CREATED
             reload_tools()
         except Exception as e:
             logger.warning("Tool saved but registry reload failed: %s", e)
@@ -432,15 +433,19 @@ except Exception as e:
         schemas = get_tool_schemas()
         found = any(s["function"]["name"] == name for s in schemas)
         if found:
-            EventBus().publish(TOOL_CREATED, name=name, file=str(filepath))
+            EventBus().publish_typed(
+                TOOL_CREATED,
+                ToolRegistryChangedPayload(name=name, file=str(filepath)),
+            )
             return f"Tool '{name}' created and registered successfully at {filepath}."
         else:
             return f"Tool '{name}' saved to {filepath} but schema not found in registry. Check the file."
 
     def archive_tool(self, name: str) -> str:
         """Move a generated tool from production/ to archived/."""
-        from tools_meta.manager import set_state, STATE_ARCHIVED
-        from orchestrator.event_bus import EventBus, TOOL_ARCHIVED
+        from orchestrator.event_bus import TOOL_ARCHIVED, EventBus
+        from orchestrator.event_payloads import ToolRegistryChangedPayload
+        from tools_meta.manager import STATE_ARCHIVED, set_state
 
         src = _TOOLS_DIR / f"{name}.py"
         if not src.exists():
@@ -454,7 +459,9 @@ except Exception as e:
         dst = _ARCHIVE_DIR / f"{name}.py"
         src.rename(dst)
         set_state(name, STATE_ARCHIVED)
-        EventBus().publish(TOOL_ARCHIVED, name=name)
+        EventBus().publish_typed(
+            TOOL_ARCHIVED, ToolRegistryChangedPayload(name=name)
+        )
         return f"Tool '{name}' archived from production to archived/."
 
     def promote_tool(self, name: str) -> str:
@@ -480,8 +487,9 @@ except Exception as e:
         benchmarks the new version, and replaces if faster.
         """
         from orchestrator.core import ToolExecutor
-        from tools_meta.manager import set_state, STATE_DEGRADED, STATE_ACTIVE
-        from orchestrator.event_bus import EventBus, TOOL_OPTIMIZED
+        from orchestrator.event_bus import TOOL_OPTIMIZED, EventBus
+        from orchestrator.event_payloads import ToolRegistryChangedPayload
+        from tools_meta.manager import STATE_ACTIVE, STATE_DEGRADED, set_state
 
         stats = ToolExecutor.tool_stats(name)
         if not stats:
@@ -545,7 +553,10 @@ except Exception as e:
                 created_from="observation",
             )
 
-            EventBus().publish(TOOL_OPTIMIZED, name=name, old_ms=old_ms, new_ms=new_ms)
+            EventBus().publish_typed(
+                TOOL_OPTIMIZED,
+                ToolRegistryChangedPayload(name=name, old_ms=old_ms, new_ms=new_ms),
+            )
 
             return (f"Optimized '{name}': {old_ms:.0f}ms → {new_ms:.0f}ms "
                     f"({((old_ms-new_ms)/old_ms*100):.0f}% faster). Updated.")
