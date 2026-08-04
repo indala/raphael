@@ -8,16 +8,17 @@ Lifecycle operations: Create, Update, Version, Archive, Delete, Merge, Benchmark
 """
 
 import ast
+import contextlib
 import json
 import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 from skills import register
 from skills.base_skill import Skill
-import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ class ToolManagerSkill(Skill):
     name = "tool_manager"
     description = "Design, generate, validate, test, review, and register new tools. Also update, version, archive, delete, merge, benchmark, and manage tool metadata."
 
-    required_tools = [
+    required_tools: ClassVar[list[str]] = [
         "run_system_command", "process_file", "web_search", "web_fetch",
     ]
 
@@ -381,13 +382,13 @@ except Exception as e:
         except json.JSONDecodeError:
             return {"passed": False, "issues": [f"Review returned unparseable JSON: {text[:200]}"], "verdict": "FAIL"}
 
-    def register_tool(self, name: str, code: str, llm=None, test_code: str = "") -> str:
+    def register_tool(self, name: str, code: str, _llm=None, test_code: str = "") -> str:
         """Stage 7: Save tool to production/, write tests, reload registry.
 
         Args:
             name: Tool name.
             code: Full Python module source.
-            llm: Unused, kept for API compatibility.
+            _llm: Unused, kept for API compatibility.
             test_code: Optional generated test code saved to tests/generated/.
 
         Returns:
@@ -466,7 +467,7 @@ except Exception as e:
 
     def promote_tool(self, name: str) -> str:
         """Move a tool from draft/ or archived/ to production/ and register it."""
-        from tools_meta.manager import set_state, STATE_ACTIVE
+        from tools_meta.manager import STATE_ACTIVE, set_state
 
         for source_dir in (_DRAFT_DIR, _ARCHIVE_DIR):
             src = source_dir / f"{name}.py"
@@ -567,18 +568,26 @@ except Exception as e:
 
     # ── Lifecycle Operations ─────────────────────────────────────────────
 
-    def run_pipeline(self, query: str, llm, executor) -> str:
+    def run_pipeline(self, query: str, llm, _executor) -> str:
         """
         Run the full tool creation pipeline:
             DESIGN → GENERATE → VALIDATE → SANDBOX TEST → BENCHMARK → SELF REVIEW → REGISTER
         Returns a detailed report of each stage.
         """
         from tools_meta.manager import (
-            init_tool, set_state, update_meta, record_test_result,
-            record_benchmark,
-            add_changelog, bump_version, STATE_GENERATED,
-            STATE_VALIDATED, STATE_TESTED, STATE_BENCHMARKED, STATE_REVIEWED,
             STATE_ACTIVE,
+            STATE_BENCHMARKED,
+            STATE_GENERATED,
+            STATE_REVIEWED,
+            STATE_TESTED,
+            STATE_VALIDATED,
+            add_changelog,
+            bump_version,
+            init_tool,
+            record_benchmark,
+            record_test_result,
+            set_state,
+            update_meta,
         )
 
         report_lines = ["## Tool Creation Pipeline Report\n"]
@@ -736,7 +745,7 @@ except Exception as e:
 
     def update_tool(self, name: str, query: str, llm, executor) -> str:
         """Update an existing tool by re-running the pipeline with new design."""
-        from tools_meta.manager import get_tool_meta, set_state, STATE_DESIGNED, add_changelog
+        from tools_meta.manager import STATE_DESIGNED, add_changelog, get_tool_meta, set_state
 
         meta = get_tool_meta(name)
         if not meta:
@@ -815,7 +824,7 @@ print(f"MAX:{{max(times):.2f}}")
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
-    def _generate_test_cases(self, name: str, params: list) -> list[dict]:
+    def _generate_test_cases(self, _name: str, params: list) -> list[dict]:
         """Generate basic test cases from parameter definitions."""
         if not params:
             return [{"name": "basic_call", "args": {}, "expect": "returns string"}]
@@ -852,7 +861,7 @@ print(f"MAX:{{max(times):.2f}}")
 
     # ── Skill Execution ──────────────────────────────────────────────────
 
-    def execute(self, llm, executor, query: str = "", **kwargs) -> str:
+    def execute(self, llm, executor, query: str = "", **_kwargs) -> str:
         """Execute the Tool Manager skill based on the query."""
         q = query.lower()
 

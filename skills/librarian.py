@@ -7,6 +7,8 @@ with a focused skill using only memory tools.
 """
 
 import logging
+from typing import ClassVar
+
 from skills import register
 from skills.base_skill import Skill
 
@@ -17,9 +19,9 @@ logger = logging.getLogger(__name__)
 class LibrarianSkill(Skill):
     name = "librarian"
     description = "Recall and manage long-term memory about the user"
-    required_tools = ["recall_memory", "save_memory", "list_memory_categories"]
+    required_tools: ClassVar[list[str]] = ["recall_memory", "save_memory", "list_memory_categories"]
 
-    def execute(self, llm, executor, query: str = "", **kwargs) -> str:
+    def execute(self, llm, executor, query: str = "", **kwargs) -> str:  # noqa: ARG002
         """Retrieve memory context relevant to a query."""
         try:
             from orchestrator.memory_agent import get_relevant_context

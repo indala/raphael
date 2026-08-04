@@ -21,7 +21,7 @@ import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from orchestrator.event_payloads import EventPayload
@@ -61,7 +61,7 @@ class EventBus:
     _instance: EventBus | None = None
     _lock = threading.RLock()
     _pool: ThreadPoolExecutor | None = None
-    _subscribers: dict[str, list[EventHandler]] = {}
+    _subscribers: ClassVar[dict[str, list[EventHandler]]] = {}
 
     def __new__(cls):
         if cls._instance is None:

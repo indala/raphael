@@ -9,6 +9,8 @@ Supports extra_context injection from agent evolution memory.
 
 import json
 import logging
+from typing import ClassVar
+
 from skills import register
 from skills.base_skill import Skill
 
@@ -32,7 +34,7 @@ Do not use any tools other than web_search, web_fetch, and get_weather.
 class ResearcherSkill(Skill):
     name = "researcher"
     description = "Search the web and fetch page content to research topics"
-    required_tools = ["web_search", "web_fetch", "get_weather"]
+    required_tools: ClassVar[list[str]] = ["web_search", "web_fetch", "get_weather"]
 
     def execute(self, llm, executor, query: str = "", **kwargs) -> str:
         """Research a topic using web search and page fetch."""

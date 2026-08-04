@@ -7,7 +7,7 @@ accomplish their task.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from orchestrator.core import LLMClient, ToolExecutor
@@ -18,7 +18,7 @@ class Skill(ABC):
 
     name: str = ""
     description: str = ""
-    required_tools: list[str] = []
+    required_tools: ClassVar[list[str]] = []
 
     @abstractmethod
     def execute(self, llm: LLMClient, executor: ToolExecutor, **kwargs) -> str:

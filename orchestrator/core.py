@@ -1014,7 +1014,9 @@ class RaphaelOrchestrator:
         Args:
             agent_map: Mapping of agent type name → callable(goal, context) -> str.
         """
-        from orchestrator.tools.native.agent import register_agent_type  # type: ignore[attr-defined]
+        from orchestrator.tools.native.agent import (
+            register_agent_type,  # type: ignore[attr-defined]
+        )
         for name, handler in agent_map.items():
             register_agent_type(name, handler)
 

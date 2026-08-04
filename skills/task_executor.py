@@ -10,6 +10,7 @@ import json
 import logging
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import ClassVar
 
 from skills import register
 from skills.base_skill import Skill
@@ -63,9 +64,9 @@ def _topological_sort(steps: list[dict]) -> list[list[int]]:
 class TaskExecutorSkill(Skill):
     name = "task_executor"
     description = "Execute a step-by-step plan using available tools"
-    required_tools = []  # Dynamic — depends on the plan
+    required_tools: ClassVar[list[str]] = []  # Dynamic — depends on the plan
 
-    def execute(self, llm, executor, plan_json: str = "", **kwargs) -> str:
+    def execute(self, llm, executor, plan_json: str = "", **kwargs) -> str:  # noqa: ARG002
         """Execute a JSON plan with DAG-based parallel execution."""
         try:
             steps = json.loads(plan_json) if isinstance(plan_json, str) else plan_json

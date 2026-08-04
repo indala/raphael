@@ -14,6 +14,8 @@ import ast
 import json
 import logging
 import os
+from typing import ClassVar
+
 from skills import register
 from skills.base_skill import Skill
 
@@ -82,9 +84,9 @@ Generate ONLY the Python code, no explanation.
 class ManagerSkill(Skill):
     name = "manager"
     description = "Create new tools dynamically and manage agent capabilities"
-    required_tools = ["list_agents", "delegate_to_agent"]
+    required_tools: ClassVar[list[str]] = ["list_agents", "delegate_to_agent"]
 
-    def execute(self, llm, executor, query: str = "", **kwargs) -> str:
+    def execute(self, llm, executor, query: str = "", **_kwargs) -> str:
         """Execute the manager skill.
 
         The Manager Skill handles:
@@ -103,7 +105,7 @@ class ManagerSkill(Skill):
         # Otherwise, route to the right agent
         return self._route_task(query, llm, executor)
 
-    def _create_tool(self, query: str, llm, executor) -> str:
+    def _create_tool(self, query: str, llm, _executor) -> str:
         """Generate a new tool module from a natural language description."""
         logger.info("Manager: creating tool from: %s", query[:80])
 
@@ -198,10 +200,10 @@ class ManagerSkill(Skill):
             return None
         return None
 
-    def _route_task(self, query: str, llm, executor) -> str:
+    def _route_task(self, query: str, llm, _executor) -> str:
         """Route a task to the appropriate agent using delegation."""
         # First, list available agents
-        from orchestrator.tools.native.delegation import list_agents, delegate_to_agent
+        from orchestrator.tools.native.delegation import delegate_to_agent, list_agents
 
         agents_info_raw = list_agents()
         agents_info = json.loads(agents_info_raw)

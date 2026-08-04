@@ -7,6 +7,8 @@ a numbered plan. The executor agent then executes each step.
 
 import json
 import logging
+from typing import ClassVar
+
 from skills import register
 from skills.base_skill import Skill
 
@@ -38,9 +40,9 @@ Keep plans minimal — 2-5 steps. If the request is simple (1 tool), just return
 class PlannerSkill(Skill):
     name = "planner"
     description = "Break down a complex request into a step-by-step plan"
-    required_tools = []
+    required_tools: ClassVar[list[str]] = []
 
-    def execute(self, llm, executor, query: str = "", **kwargs) -> str:
+    def execute(self, llm, executor, query: str = "", **kwargs) -> str:  # noqa: ARG002
         """Decompose a query into structured steps."""
         messages = [
             {"role": "system", "content": _PLANNER_PROMPT},

@@ -32,6 +32,7 @@ def discover_skills():
     """Lazy-import all skill modules to trigger registration."""
     import importlib
     import pkgutil
+
     import skills
     for m in pkgutil.iter_modules(skills.__path__, skills.__name__ + "."):
         if m.name != __name__:  # skip base_skill itself
