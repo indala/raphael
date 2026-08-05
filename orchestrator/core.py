@@ -511,11 +511,31 @@ class LLMClient:
         logger.warning("Stream failed after 3 attempts, falling back to non-streaming (reason=%s): %s", reason, last_error)
         return self.chat(messages, tools, use_vision_model, reason=reason)
 
+    @staticmethod
+    def _is_failure_result(result: str) -> bool:
+        """Heuristic: does a tool result string signal a failed execution?"""
+        text = result.strip()
+        if not text:
+            return True
+        low = text.lower()
+        markers = (
+            "failed", "error", "could not", "cannot", "unable to",
+            "not found", "no such", "invalid", "exception", "denied",
+            "timed out", "timeout", "command not recognized", "received no response",
+        )
+        return any(m in low for m in markers)
+
     def chat_tool_loop(self, messages: list[dict], schemas: list[dict],
                        executor: ToolExecutor, max_rounds: int = 8,
                        reason: str = "tool_loop") -> str:
-        """Run a multi-turn tool-calling loop. Returns final text response."""
+        """Run a multi-turn tool-calling loop. Returns final text response.
+
+        Guards against runaway loops: if a tool fails repeatedly in consecutive
+        rounds, the LLM is instructed to stop calling it instead of retrying it
+        indefinitely.
+        """
         msgs = list(messages)
+        _failure_counts: dict[str, int] = {}
         for _ in range(max_rounds):
             response = self.chat(msgs, schemas, reason=reason)
             if not response or not hasattr(response, "content"):
@@ -575,6 +595,24 @@ class LLMClient:
                         "tool_call_id": tool_call.id,
                         "content": _tool_results.get(tool_call.id, "Error: tool result missing"),
                     })
+
+                # Guard: halt repeated failures of the same tool across rounds
+                for tc in response.tool_calls:
+                    if self._is_failure_result(_tool_results.get(tc.id, "")):
+                        _failure_counts[tc.function.name] = _failure_counts.get(tc.function.name, 0) + 1
+                        if _failure_counts[tc.function.name] >= 3:
+                            logger.warning("Tool %s failed %d consecutive times; telling LLM to stop",
+                                           tc.function.name, _failure_counts[tc.function.name])
+                            msgs.append({
+                                "role": "system",
+                                "content": (
+                                    f"The tool '{tc.function.name}' has failed repeatedly "
+                                    f"({_failure_counts[tc.function.name]} consecutive attempts). "
+                                    "Stop calling it. Try a different, simpler approach or tell the user "
+                                    "that the action could not be completed."
+                                ),
+                            })
+                            _failure_counts[tc.function.name] = 0
             else:
                 return response.content or ""
         return "(reached max rounds without final response)"

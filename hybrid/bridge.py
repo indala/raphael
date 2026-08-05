@@ -226,13 +226,31 @@ class LazyBridge:
 
     @staticmethod
     def call(method: str, *args) -> Any | None:
+        """Call the bridge and return its result, or ``None`` on failure.
+
+        Retained for backward compatibility: callers that only read a truthy
+        result cannot tell a successful void call (result None) apart from a
+        genuine failure. Prefer :meth:`call_checked` when the outcome matters.
+        """
+        ok, result = LazyBridge.call_checked(method, *args)
+        return result if ok else None
+
+    @staticmethod
+    def call_checked(method: str, *args) -> tuple[bool, Any]:
+        """Call the bridge and return ``(success, result_or_error_message)``.
+
+        Unlike :meth:`call`, this lets callers distinguish a genuine failure
+        (False, error message) from a successful void command (True, None).
+        It never raises — a bridge outage surfaces as ``(False, msg)`` so the
+        upstream tool can report it to the LLM instead of pretending success.
+        """
         if _shutdown_active:
-            return None
+            return False, "Bridge is shutting down"
         try:
-            return _call(method, *args)
+            return True, _call(method, *args)
         except Exception as e:
             if _shutdown_active:
-                return None  # type: ignore[unreachable]
+                return False, "Bridge is shutting down"
             # During normal shutdown, the bridge process is terminated
             # which causes pipe reads to fail with empty responses.
             # These are expected and should not be logged as errors.
@@ -241,109 +259,116 @@ class LazyBridge:
                 logger.debug("%s: %s (shutdown expected)", method, e)
             elif "(interrupted)" not in msg:
                 logger.error("%s failed: %s", method, e)
-            return None
+            return False, msg or repr(e)
 
 
 # ── Public API (mirrors old pythonnet-based exports) ──
 
 
 class CInputSimulator:
+    """Input simulation via the C# bridge.
+
+    Each command reports its true outcome: ``False`` plus a logged reason when
+    the bridge call failed, so callers can surface failures to the LLM instead
+    of the old behavior of returning ``True`` unconditionally.
+    """
+
     @staticmethod
     def MoveTo(x: int, y: int) -> bool:
-        LazyBridge.call("input_move_to", x, y)
-        return True
+        ok, _err = LazyBridge.call_checked("input_move_to", x, y)
+        return ok
 
     @staticmethod
     def Click(button: str = "left") -> bool:
-        LazyBridge.call("input_click", button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_click", button)
+        return ok
 
     @staticmethod
     def ClickAt(x: int, y: int, button: str = "left") -> bool:
-        LazyBridge.call("input_click_at", x, y, button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_click_at", x, y, button)
+        return ok
 
     @staticmethod
     def GetCursorPosition():
-        r = LazyBridge.call("input_get_cursor")
-        return (r["x"], r["y"]) if r else (0, 0)
+        ok, r = LazyBridge.call_checked("input_get_cursor")
+        return (r["x"], r["y"]) if ok and r else (0, 0)
 
     @staticmethod
     def TypeText(text: str) -> bool:
-        LazyBridge.call("input_type_text", text)
-        return True
+        ok, _err = LazyBridge.call_checked("input_type_text", text)
+        return ok
 
     @staticmethod
     def PressKey(key: str) -> bool:
-        LazyBridge.call("input_press_key", key)
-        return True
+        ok, _err = LazyBridge.call_checked("input_press_key", key)
+        return ok
 
     @staticmethod
     def ReleaseKey(key: str) -> bool:
-        LazyBridge.call("input_release_key", key)
-        return True
+        ok, _err = LazyBridge.call_checked("input_release_key", key)
+        return ok
 
     @staticmethod
     def TapKey(key: str) -> bool:
-        LazyBridge.call("input_tap_key", key)
-        return True
+        ok, _err = LazyBridge.call_checked("input_tap_key", key)
+        return ok
 
     @staticmethod
     def Hotkey(keys: str) -> bool:
-        LazyBridge.call("input_hotkey", keys)
-        return True
+        ok, _err = LazyBridge.call_checked("input_hotkey", keys)
+        return ok
 
     # ── Mouse Enhancements ──
 
     @staticmethod
     def DoubleClick(button: str = "left") -> bool:
-        LazyBridge.call("input_double_click", button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_double_click", button)
+        return ok
 
     @staticmethod
     def DoubleClickAt(x: int, y: int, button: str = "left") -> bool:
-        LazyBridge.call("input_double_click_at", x, y, button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_double_click_at", x, y, button)
+        return ok
 
     @staticmethod
     def SmoothMoveTo(x: int, y: int, duration_ms: int = 200) -> bool:
-        LazyBridge.call("input_smooth_move_to", x, y, duration_ms)
-        return True
+        ok, _err = LazyBridge.call_checked("input_smooth_move_to", x, y, duration_ms)
+        return ok
 
     @staticmethod
     def Drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> bool:
-        LazyBridge.call("input_drag", x1, y1, x2, y2, button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_drag", x1, y1, x2, y2, button)
+        return ok
 
     @staticmethod
     def Scroll(clicks: int) -> bool:
-        LazyBridge.call("input_scroll", clicks)
-        return True
+        ok, _err = LazyBridge.call_checked("input_scroll", clicks)
+        return ok
 
     @staticmethod
     def ScrollAt(x: int, y: int, clicks: int) -> bool:
-        LazyBridge.call("input_scroll_at", x, y, clicks)
-        return True
+        ok, _err = LazyBridge.call_checked("input_scroll_at", x, y, clicks)
+        return ok
 
     @staticmethod
     def MoveRelative(dx: int, dy: int) -> bool:
-        LazyBridge.call("input_move_relative", dx, dy)
-        return True
+        ok, _err = LazyBridge.call_checked("input_move_relative", dx, dy)
+        return ok
 
     @staticmethod
     def MouseDown(button: str = "left") -> bool:
-        LazyBridge.call("input_mouse_down", button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_mouse_down", button)
+        return ok
 
     @staticmethod
     def MouseUp(button: str = "left") -> bool:
-        LazyBridge.call("input_mouse_up", button)
-        return True
+        ok, _err = LazyBridge.call_checked("input_mouse_up", button)
+        return ok
 
     @staticmethod
     def GetScreenSize():
-        r = LazyBridge.call("input_get_screen_size")
-        return (r["width"], r["height"]) if r else (0, 0)
+        ok, r = LazyBridge.call_checked("input_get_screen_size")
+        return (r["width"], r["height"]) if ok and r else (0, 0)
 
 
 class CScreenCapture:

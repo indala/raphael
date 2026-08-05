@@ -14,6 +14,9 @@ from pathlib import Path
 from modules import process_control as _proc
 from modules import services as _services
 
+# Suppress console windows when spawning console subprocesses from the GUI process
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 # Optional C# hybrid bridge
 try:
     from hybrid.bridge import CShellHelper as CsShell
@@ -419,6 +422,7 @@ def _search_app_path(app_name: str) -> str | None:
         result = subprocess.run(
             ["where.exe", f"{name_lower}.exe"],
             capture_output=True, text=True, timeout=5,
+            creationflags=_NO_WINDOW,
         )
         if result.returncode == 0:
             path = result.stdout.strip().split("\n")[0].strip()
@@ -466,6 +470,7 @@ def _search_app_path(app_name: str) -> str | None:
                     result = subprocess.run(
                         ["powershell", "-NoProfile", "-Command", ps_cmd],
                         capture_output=True, text=True, timeout=5,
+                        creationflags=_NO_WINDOW,
                     )
                     if result.returncode == 0:
                         target = result.stdout.strip()
@@ -556,7 +561,8 @@ def run_command(command: str) -> str:
         if not cmd_args:
             return "Empty command."
         proc = subprocess.Popen(
-            cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            creationflags=_NO_WINDOW,
         )
         try:
             stdout, stderr = proc.communicate(timeout=25)
@@ -564,7 +570,8 @@ def run_command(command: str) -> str:
             return output[:2000] if output else "Command completed with no output."
         except subprocess.TimeoutExpired:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True,
+                               creationflags=_NO_WINDOW)
             else:
                 proc.kill()
             return "Command timed out after 25 seconds."

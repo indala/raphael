@@ -30,8 +30,7 @@ def click(x: int, y: int, button: str = "left") -> bool:
         logger.error("C# bridge not available — cannot click")
         return False
     try:
-        CsInput.ClickAt(x, y, button)
-        return True
+        return bool(CsInput.ClickAt(x, y, button))
     except Exception as e:
         logger.error("C# ClickAt failed: %s", e)
         return False
@@ -43,8 +42,7 @@ def double_click(x: int, y: int, button: str = "left") -> bool:
         logger.error("C# bridge not available — cannot double-click")
         return False
     try:
-        CsInput.DoubleClickAt(x, y, button)
-        return True
+        return bool(CsInput.DoubleClickAt(x, y, button))
     except Exception as e:
         logger.error("C# DoubleClickAt failed: %s", e)
         return False
@@ -56,8 +54,7 @@ def smooth_move_to(x: int, y: int, duration_ms: int = 200) -> bool:
         logger.error("C# bridge not available — cannot move")
         return False
     try:
-        CsInput.SmoothMoveTo(x, y, duration_ms)
-        return True
+        return bool(CsInput.SmoothMoveTo(x, y, duration_ms))
     except Exception as e:
         logger.error("C# SmoothMoveTo failed: %s", e)
         return False
@@ -69,8 +66,7 @@ def drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> bool:
         logger.error("C# bridge not available — cannot drag")
         return False
     try:
-        CsInput.Drag(x1, y1, x2, y2, button)
-        return True
+        return bool(CsInput.Drag(x1, y1, x2, y2, button))
     except Exception as e:
         logger.error("C# Drag failed: %s", e)
         return False
@@ -82,8 +78,7 @@ def scroll(clicks: int) -> bool:
         logger.error("C# bridge not available — cannot scroll")
         return False
     try:
-        CsInput.Scroll(clicks)
-        return True
+        return bool(CsInput.Scroll(clicks))
     except Exception as e:
         logger.error("C# Scroll failed: %s", e)
         return False
@@ -95,8 +90,7 @@ def scroll_at(x: int, y: int, clicks: int) -> bool:
         logger.error("C# bridge not available — cannot scroll")
         return False
     try:
-        CsInput.ScrollAt(x, y, clicks)
-        return True
+        return bool(CsInput.ScrollAt(x, y, clicks))
     except Exception as e:
         logger.error("C# ScrollAt failed: %s", e)
         return False
@@ -108,8 +102,7 @@ def move_relative(dx: int, dy: int) -> bool:
         logger.error("C# bridge not available — cannot move")
         return False
     try:
-        CsInput.MoveRelative(dx, dy)
-        return True
+        return bool(CsInput.MoveRelative(dx, dy))
     except Exception as e:
         logger.error("C# MoveRelative failed: %s", e)
         return False
@@ -121,8 +114,7 @@ def mouse_down(button: str = "left") -> bool:
         logger.error("C# bridge not available")
         return False
     try:
-        CsInput.MouseDown(button)
-        return True
+        return bool(CsInput.MouseDown(button))
     except Exception as e:
         logger.error("C# MouseDown failed: %s", e)
         return False
@@ -134,8 +126,7 @@ def mouse_up(button: str = "left") -> bool:
         logger.error("C# bridge not available")
         return False
     try:
-        CsInput.MouseUp(button)
-        return True
+        return bool(CsInput.MouseUp(button))
     except Exception as e:
         logger.error("C# MouseUp failed: %s", e)
         return False
@@ -147,8 +138,7 @@ def type_text(text: str) -> bool:
         logger.error("C# bridge not available — cannot type")
         return False
     try:
-        CsInput.TypeText(text)
-        return True
+        return bool(CsInput.TypeText(text))
     except Exception as e:
         logger.error("C# TypeText failed: %s", e)
         return False
@@ -160,8 +150,7 @@ def press_key(key: str) -> bool:
         logger.error("C# bridge not available — cannot press key")
         return False
     try:
-        CsInput.TapKey(key)
-        return True
+        return bool(CsInput.TapKey(key))
     except Exception as e:
         logger.error("C# TapKey failed: %s", e)
         return False
@@ -173,8 +162,7 @@ def hotkey(*keys: str) -> bool:
         logger.error("C# bridge not available — cannot send hotkey")
         return False
     try:
-        CsInput.Hotkey("+".join(keys).lower())
-        return True
+        return bool(CsInput.Hotkey("+".join(keys).lower()))
     except Exception as e:
         logger.error("C# Hotkey failed: %s", e)
         return False

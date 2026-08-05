@@ -15,6 +15,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Suppress console windows when spawning console subprocesses (PowerShell, etc.)
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 # Optional psutil
 try:
     import psutil as _psutil
@@ -298,6 +301,7 @@ def desktop_network() -> str:
                 capture_output=True,
                 text=True,
                 timeout=8,
+                creationflags=_NO_WINDOW,
             )
             ssid = r.stdout.strip()
             if ssid:
@@ -704,6 +708,7 @@ ConvertTo-Json $results
             capture_output=True,
             text=True,
             timeout=10,
+            creationflags=_NO_WINDOW,
         )
         if r.returncode == 0 and r.stdout.strip() and r.stdout.strip() != "null":
             data = json.loads(r.stdout.strip())

@@ -334,6 +334,7 @@ except Exception as e:
                     [sys.executable, "-c", test_script],
                     capture_output=True, text=True, timeout=15,
                     env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
 
                 stdout = proc.stdout.strip()
@@ -803,6 +804,7 @@ print(f"MAX:{{max(times):.2f}}")
             proc = subprocess.run(
                 [sys.executable, "-c", bench_script],
                 capture_output=True, text=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             lines = proc.stdout.strip().split("\n")
             avg_ms = 0.0

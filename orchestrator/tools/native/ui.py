@@ -626,8 +626,25 @@ def get_schemas() -> list[dict]:
     ]
 
 
+def _coerce_int(value, name: str = "coordinate") -> int:
+    """Coerce a value to int, tolerating models that emit numbers as strings.
+
+    Raises ValueError with a clear message if the value can't be converted.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer, got bool")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be an integer, got {value!r}") from None
+
+
 def ui_click(x: int, y: int, button: str = "left") -> str:
     """Click at screen coordinates."""
+    try:
+        x, y = _coerce_int(x, "x"), _coerce_int(y, "y")
+    except ValueError as e:
+        return f"Failed to click: {e}. Provide integer screen coordinates."
     if _ui_control.click(x, y, button):
         return f"Clicked {button} button at ({x}, {y})."
     return f"Failed to click {button} button at ({x}, {y})."
@@ -635,6 +652,10 @@ def ui_click(x: int, y: int, button: str = "left") -> str:
 
 def ui_double_click(x: int, y: int, button: str = "left") -> str:
     """Double-click at screen coordinates."""
+    try:
+        x, y = _coerce_int(x, "x"), _coerce_int(y, "y")
+    except ValueError as e:
+        return f"Failed to double-click: {e}. Provide integer screen coordinates."
     if _ui_control.double_click(x, y, button):
         return f"Double-clicked {button} button at ({x}, {y})."
     return f"Failed to double-click at ({x}, {y})."
@@ -642,6 +663,10 @@ def ui_double_click(x: int, y: int, button: str = "left") -> str:
 
 def ui_smooth_move(x: int, y: int, duration_ms: int = 200) -> str:
     """Animate cursor smoothly to coordinates."""
+    try:
+        x, y, duration_ms = _coerce_int(x, "x"), _coerce_int(y, "y"), _coerce_int(duration_ms, "duration_ms")
+    except ValueError as e:
+        return f"Failed to move cursor: {e}."
     if _ui_control.smooth_move_to(x, y, duration_ms):
         return f"Smoothly moved cursor to ({x}, {y}) over {duration_ms}ms."
     return f"Failed to move cursor to ({x}, {y})."
@@ -649,6 +674,11 @@ def ui_smooth_move(x: int, y: int, duration_ms: int = 200) -> str:
 
 def ui_drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> str:
     """Drag from start to end coordinates holding button."""
+    try:
+        x1, y1 = _coerce_int(x1, "x1"), _coerce_int(y1, "y1")
+        x2, y2 = _coerce_int(x2, "x2"), _coerce_int(y2, "y2")
+    except ValueError as e:
+        return f"Failed to drag: {e}."
     if _ui_control.drag(x1, y1, x2, y2, button):
         return f"Dragged {button} button from ({x1},{y1}) to ({x2},{y2})."
     return f"Failed to drag from ({x1},{y1}) to ({x2},{y2})."
@@ -656,6 +686,10 @@ def ui_drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> str:
 
 def ui_scroll(clicks: int) -> str:
     """Scroll mouse wheel at current position."""
+    try:
+        clicks = _coerce_int(clicks, "clicks")
+    except ValueError as e:
+        return f"Failed to scroll: {e}."
     if _ui_control.scroll(clicks):
         direction = "down" if clicks > 0 else "up"
         return f"Scrolled {direction} {abs(clicks)} clicks."
@@ -664,6 +698,10 @@ def ui_scroll(clicks: int) -> str:
 
 def ui_scroll_at(x: int, y: int, clicks: int) -> str:
     """Move to coordinates then scroll mouse wheel."""
+    try:
+        x, y, clicks = _coerce_int(x, "x"), _coerce_int(y, "y"), _coerce_int(clicks, "clicks")
+    except ValueError as e:
+        return f"Failed to scroll at coordinate: {e}."
     if _ui_control.scroll_at(x, y, clicks):
         direction = "down" if clicks > 0 else "up"
         return f"Moved to ({x},{y}) and scrolled {direction} {abs(clicks)} clicks."
@@ -672,6 +710,10 @@ def ui_scroll_at(x: int, y: int, clicks: int) -> str:
 
 def ui_move_relative(dx: int, dy: int) -> str:
     """Move cursor relative to current position."""
+    try:
+        dx, dy = _coerce_int(dx, "dx"), _coerce_int(dy, "dy")
+    except ValueError as e:
+        return f"Failed to move cursor: {e}."
     if _ui_control.move_relative(dx, dy):
         return f"Moved cursor by ({dx:+d}, {dy:+d})."
     return f"Failed to move cursor by ({dx}, {dy})."
