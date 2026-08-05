@@ -177,6 +177,7 @@ def _processes_fallback() -> str:
             capture_output=True,
             text=True,
             timeout=15,
+            creationflags=_NO_WINDOW,
         )
         result.check_returncode()
         lines = ["Running processes (from tasklist):"]
