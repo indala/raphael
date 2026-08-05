@@ -1,0 +1,633 @@
+ Conversation compacted (ctrl+o for history)                                                                                                                                                                                                                                                                                   Read 1 file (ctrl+o to expand)                                                                                                                                                                                    ● Update(orchestrator\tools\native\desktop.py)                                                            
+  └  Added 1 line                                                                                               708              capture_output=True,                                                                     709              text=True,                                                                               710              timeout=10,                                                                              711 +            creationflags=_NO_WINDOW,                                                                712          )                                                                                            713          if r.returncode == 0 and r.stdout.strip() and r.stdout.strip() != "null":                    714              data = json.loads(r.stdout.strip())                                                                                                                                                          ● Now scan the remaining subprocess.run/Popen calls across the native tools for console-spawning calls.                                                                                                               Searched for 1 pattern (ctrl+o to expand)                                                                                                                                                                         ● Let me check which of these spawn console processes (powershell/cmd). Reading the relevant sections.                                                                                                                Read 2 files (ctrl+o to expand)                                                                                                                                                                                   
+● The tasklist/wmic/nvidia-smi polls also flash console windows when spawned from a GUI process. Let me
+  check the remaining PowerShell/console spawns.
+
+  Read 2 files (ctrl+o to expand)
+
+● notifications.py already handles it. tool_manager.py spawns console python subprocesses (dev-time tool  
+  tests) — I'll add the flag there too. Now checking system.py and main.py.
+
+  Read 1 file (ctrl+o to expand)
+
+● Adding the flag to the console spawns in system.py (powershell .lnk resolution, where.exe, taskkill) and
+   run_command's Popen. Let me check system.py's imports first.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(orchestrator\tools\native\system.py)
+  └  Added 3 lines
+      14  from modules import process_control as _proc
+      15  from modules import services as _services
+      16
+      17 +# Suppress console windows when spawning console subprocesses from the GUI process              
+      18 +_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)                                         
+      19 +                                                                                                
+      20  # Optional C# hybrid bridge
+      21  try:
+      22      from hybrid.bridge import CShellHelper as CsShell
+
+● Update(orchestrator\tools\native\system.py)
+  └  Added 1 line
+      422          result = subprocess.run(
+      423              ["where.exe", f"{name_lower}.exe"],
+      424              capture_output=True, text=True, timeout=5,
+      425 +            creationflags=_NO_WINDOW,                                                          
+      426          )
+      427          if result.returncode == 0:
+      428              path = result.stdout.strip().split("\n")[0].strip()
+
+● Update(orchestrator\tools\native\system.py)
+  └  Added 1 line
+      422          result = subprocess.run(
+      423              ["where.exe", f"{name_lower}.exe"],
+      424              capture_output=True, text=True, timeout=5,
+      425 +            creationflags=_NO_WINDOW,                                                          
+      426          )
+      427          if result.returncode == 0:
+      428              path = result.stdout.strip().split("\n")[0].strip()
+
+● Update(orchestrator\tools\native\system.py)
+  └  Added 1 line
+      422          result = subprocess.run(
+      423              ["where.exe", f"{name_lower}.exe"],
+      424              capture_output=True, text=True, timeout=5,
+      425 +            creationflags=_NO_WINDOW,                                                          
+      426          )
+      427          if result.returncode == 0:
+      428              path = result.stdout.strip().split("\n")[0].strip()
+
+● Now tool_manager.py (python subprocess) and main.py:87.
+
+  Read 1 file (ctrl+o to expand)
+
+● main.py:87 is a dev install path with visible output — leave it. Now the two tool_manager.py python     
+  subprocesses.
+
+● Update(skills\tool_manager.py)
+  └  Added 1 line
+      334                      [sys.executable, "-c", test_script],
+      335                      capture_output=True, text=True, timeout=15,
+      336                      env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+      337 +                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),                  
+      338                  )
+      339
+      340                  stdout = proc.stdout.strip()
+
+● Update(skills\tool_manager.py)
+  └  Added 1 line
+      334                      [sys.executable, "-c", test_script],
+      335                      capture_output=True, text=True, timeout=15,
+      336                      env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+      337 +                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),                  
+      338                  )
+      339
+      340                  stdout = proc.stdout.strip()
+
+● Verifying all desktop.py/system.py changes are in place.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Syntax check on all edited files.
+
+● Bash(cd "c:/Users/Mohan Kumar Indala/Desktop/lab1/raphael" && python -m py_compile
+      orchestrator/tools/native/desktop.py orchestrator/tools/native/system.py orchestra…)
+  └  ALL OK
+
+● Now the core fix. Re-reading the bridge's LazyBridge.call and CInputSimulator.
+
+  Read 1 file (ctrl+o to expand)
+
+● Reading the C# side — the Respond helpers and input handlers.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now let me check how modules/ui_control.py wraps these and how ui.py surfaces failures, plus whether the
+   bridge exe is prebuilt or built from source.
+
+  Read 1 file (ctrl+o to expand)
+
+● Bash(cd "c:/Users/Mohan Kumar Indala/Desktop/lab1/raphael" && ls hybrid/ 2>/dev/null; echo "---"; ls    
+      hybrid/RaphaelBridge/bin/Debug/ 2>/dev/null | head; echo "---";…)
+  └  Error: Exit code 2
+     __init__.py
+     __pycache__
+     AudioDeviceState.cs
+     AudioPlayer.cs
+     bin
+     bridge.py
+     ClipboardHelper.cs
+     DesktopHelper.cs
+     DisplayBrightness.cs
+     … +28 lines (ctrl+o to see all)
+
+● Let me check how the bridge exe is located/built, whether dotnet is available, and all callers of       
+  CInputSimulator.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(which dotnet 2>/dev/null && dotnet --version 2>/dev/null; echo "---"; ls "c:/Users/Mohan Kumar     
+      Indala/Desktop/lab1/raphael/hybrid/RaphaelBridge/bin/Release/net1…)
+/c/Program Files/dotnet/dotnet
+10.0.302
+---
+RaphaelBridge.deps.json
+RaphaelBridge.dll
+RaphaelBridge.exe
+RaphaelBridge.pdb
+RaphaelBridge.runtimeconfig.json
+RaphaelHybrid.dll
+RaphaelHybrid.pdb
+runtimes
+System.Management.dll
+System.Speech.dll
+
+● Bash(cd "c:/Users/Mohan Kumar Indala/Desktop/lab1/raphael" && ls -la hybrid/bin/Bridge/ 2>/dev/null;    
+      echo "---release exe---"; ls -la hybrid/RaphaelBridge/bin/Releas…)
+  └  total 26764
+     drwxr-xr-x 1 Mohan Kumar Indala 197121        0 Aug  4 19:16 .
+     drwxr-xr-x 1 Mohan Kumar Indala 197121        0 Aug  4 19:16 ..
+     … +19 lines (ctrl+o to expand)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● dotnet 10.0.302 is available and the deployed exe (hybrid/bin/Bridge/RaphaelBridge.exe) is freshly      
+  built. Now let me read the full CInputSimulator class and LazyBridge.call's exception tail so I can     
+  implement the core fix.
+
+  Read 1 file (ctrl+o to expand)
+
+● I now have the full picture. The core fix has two layers:
+
+  1. hybrid/bridge.py — LazyBridge.call swallows bridge failures and returns None (indistinguishable from 
+  a successful void call). I'll add call_checked() returning (ok, result_or_error), rewrite
+  CInputSimulator to return the real success bool.
+  2. modules/ui_control.py — the wrappers ignore ClickAt's return value and return True unconditionally,  
+  so failures never surface to the LLM.
+
+  Starting with the bridge. Adding call_checked and refactoring call to delegate.
+
+● Update(hybrid\bridge.py)
+  └  Added 22 lines, removed 4 lines
+      226
+      227      @staticmethod
+      228      def call(method: str, *args) -> Any | None:
+      229 +        """Call the bridge and return its result, or ``None`` on failure.                      
+      230 +                                                                                               
+      231 +        Retained for backward compatibility: callers that only read a truthy                   
+      232 +        result cannot tell a successful void call (result None) apart from a                   
+      233 +        genuine failure. Prefer :meth:`call_checked` when the outcome matters.                 
+      234 +        """                                                                                    
+      235 +        ok, result = LazyBridge.call_checked(method, *args)                                    
+      236 +        return result if ok else None                                                          
+      237 +                                                                                               
+      238 +    @staticmethod                                                                              
+      239 +    def call_checked(method: str, *args) -> tuple[bool, Any]:                                  
+      240 +        """Call the bridge and return ``(success, result_or_error_message)``.                  
+      241 +                                                                                               
+      242 +        Unlike :meth:`call`, this lets callers distinguish a genuine failure                   
+      243 +        (False, error message) from a successful void command (True, None).                    
+      244 +        It never raises — a bridge outage surfaces as ``(False, msg)`` so the                  
+      245 +        upstream tool can report it to the LLM instead of pretending success.                  
+      246 +        """                                                                                    
+      247          if _shutdown_active:
+      230 -            return None                                                                        
+      248 +            return False, "Bridge is shutting down"                                            
+      249          try:
+      232 -            return _call(method, *args)                                                        
+      250 +            return True, _call(method, *args)                                                  
+      251          except Exception as e:
+      252              if _shutdown_active:
+      235 -                return None  # type: ignore[unreachable]                                       
+      253 +                return False, "Bridge is shutting down"                                        
+      254              # During normal shutdown, the bridge process is terminated
+      255              # which causes pipe reads to fail with empty responses.
+      256              # These are expected and should not be logged as errors.
+     ...
+      259                  logger.debug("%s: %s (shutdown expected)", method, e)
+      260              elif "(interrupted)" not in msg:
+      261                  logger.error("%s failed: %s", method, e)
+      244 -            return None                                                                        
+      262 +            return False, msg or repr(e)                                                       
+      263
+      264
+      265  # ── Public API (mirrors old pythonnet-based exports) ──
+
+● Now rewriting CInputSimulator so void commands return the real success bool and value commands return   
+  their result on success. Replacing the whole class
+
+● Update(hybrid\bridge.py)
+  └  Added 45 lines, removed 38 lines
+      266
+      267
+      268  class CInputSimulator:
+      269 +    """Input simulation via the C# bridge.                                                     
+      270 +                                                                                               
+      271 +    Each command reports its true outcome: ``False`` plus a logged reason when                 
+      272 +    the bridge call failed, so callers can surface failures to the LLM instead                 
+      273 +    of the old behavior of returning ``True`` unconditionally.                                 
+      274 +    """                                                                                        
+      275 +                                                                                               
+      276      @staticmethod
+      277      def MoveTo(x: int, y: int) -> bool:
+      271 -        LazyBridge.call("input_move_to", x, y)                                                 
+      272 -        return True                                                                            
+      278 +        ok, _err = LazyBridge.call_checked("input_move_to", x, y)                              
+      279 +        return ok                                                                              
+      280
+      281      @staticmethod
+      282      def Click(button: str = "left") -> bool:
+      276 -        LazyBridge.call("input_click", button)                                                 
+      277 -        return True                                                                            
+      283 +        ok, _err = LazyBridge.call_checked("input_click", button)                              
+      284 +        return ok                                                                              
+      285
+      286      @staticmethod
+      287      def ClickAt(x: int, y: int, button: str = "left") -> bool:
+      281 -        LazyBridge.call("input_click_at", x, y, button)                                        
+      282 -        return True                                                                            
+      288 +        ok, _err = LazyBridge.call_checked("input_click_at", x, y, button)                     
+      289 +        return ok                                                                              
+      290
+      291      @staticmethod
+      292      def GetCursorPosition():
+      286 -        r = LazyBridge.call("input_get_cursor")                                                
+      287 -        return (r["x"], r["y"]) if r else (0, 0)                                               
+      293 +        ok, r = LazyBridge.call_checked("input_get_cursor")                                    
+      294 +        return (r["x"], r["y"]) if ok and r else (0, 0)                                        
+      295
+      296      @staticmethod
+      297      def TypeText(text: str) -> bool:
+      291 -        LazyBridge.call("input_type_text", text)                                               
+      292 -        return True                                                                            
+      298 +        ok, _err = LazyBridge.call_checked("input_type_text", text)                            
+      299 +        return ok                                                                              
+      300
+      301      @staticmethod
+      302      def PressKey(key: str) -> bool:
+      296 -        LazyBridge.call("input_press_key", key)                                                
+      297 -        return True                                                                            
+      303 +        ok, _err = LazyBridge.call_checked("input_press_key", key)                             
+      304 +        return ok                                                                              
+      305
+      306      @staticmethod
+      307      def ReleaseKey(key: str) -> bool:
+      301 -        LazyBridge.call("input_release_key", key)                                              
+      302 -        return True                                                                            
+      308 +        ok, _err = LazyBridge.call_checked("input_release_key", key)                           
+      309 +        return ok                                                                              
+      310
+      311      @staticmethod
+      312      def TapKey(key: str) -> bool:
+      306 -        LazyBridge.call("input_tap_key", key)                                                  
+      307 -        return True                                                                            
+      313 +        ok, _err = LazyBridge.call_checked("input_tap_key", key)                               
+      314 +        return ok                                                                              
+      315
+      316      @staticmethod
+      317      def Hotkey(keys: str) -> bool:
+      311 -        LazyBridge.call("input_hotkey", keys)                                                  
+      312 -        return True                                                                            
+      318 +        ok, _err = LazyBridge.call_checked("input_hotkey", keys)                               
+      319 +        return ok                                                                              
+      320
+      321      # ── Mouse Enhancements ──
+      322
+      323      @staticmethod
+      324      def DoubleClick(button: str = "left") -> bool:
+      318 -        LazyBridge.call("input_double_click", button)                                          
+      319 -        return True                                                                            
+      325 +        ok, _err = LazyBridge.call_checked("input_double_click", button)                       
+      326 +        return ok                                                                              
+      327
+      328      @staticmethod
+      329      def DoubleClickAt(x: int, y: int, button: str = "left") -> bool:
+      323 -        LazyBridge.call("input_double_click_at", x, y, button)                                 
+      324 -        return True                                                                            
+      330 +        ok, _err = LazyBridge.call_checked("input_double_click_at", x, y, button)              
+      331 +        return ok                                                                              
+      332
+      333      @staticmethod
+      334      def SmoothMoveTo(x: int, y: int, duration_ms: int = 200) -> bool:
+      328 -        LazyBridge.call("input_smooth_move_to", x, y, duration_ms)                             
+      329 -        return True                                                                            
+      335 +        ok, _err = LazyBridge.call_checked("input_smooth_move_to", x, y, duration_ms)          
+      336 +        return ok                                                                              
+      337
+      338      @staticmethod
+      339      def Drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> bool:
+      333 -        LazyBridge.call("input_drag", x1, y1, x2, y2, button)                                  
+      334 -        return True                                                                            
+      340 +        ok, _err = LazyBridge.call_checked("input_drag", x1, y1, x2, y2, button)               
+      341 +        return ok                                                                              
+      342
+      343      @staticmethod
+      344      def Scroll(clicks: int) -> bool:
+      338 -        LazyBridge.call("input_scroll", clicks)                                                
+      339 -        return True                                                                            
+      345 +        ok, _err = LazyBridge.call_checked("input_scroll", clicks)                             
+      346 +        return ok                                                                              
+      347
+      348      @staticmethod
+      349      def ScrollAt(x: int, y: int, clicks: int) -> bool:
+      343 -        LazyBridge.call("input_scroll_at", x, y, clicks)                                       
+      344 -        return True                                                                            
+      350 +        ok, _err = LazyBridge.call_checked("input_scroll_at", x, y, clicks)                    
+      351 +        return ok                                                                              
+      352
+      353      @staticmethod
+      354      def MoveRelative(dx: int, dy: int) -> bool:
+      348 -        LazyBridge.call("input_move_relative", dx, dy)                                         
+      349 -        return True                                                                            
+      355 +        ok, _err = LazyBridge.call_checked("input_move_relative", dx, dy)                      
+      356 +        return ok                                                                              
+      357
+      358      @staticmethod
+      359      def MouseDown(button: str = "left") -> bool:
+      353 -        LazyBridge.call("input_mouse_down", button)                                            
+      354 -        return True                                                                            
+      360 +        ok, _err = LazyBridge.call_checked("input_mouse_down", button)                         
+      361 +        return ok                                                                              
+      362
+      363      @staticmethod
+      364      def MouseUp(button: str = "left") -> bool:
+      358 -        LazyBridge.call("input_mouse_up", button)                                              
+      359 -        return True                                                                            
+      365 +        ok, _err = LazyBridge.call_checked("input_mouse_up", button)                           
+      366 +        return ok                                                                              
+      367
+      368      @staticmethod
+      369      def GetScreenSize():
+      363 -        r = LazyBridge.call("input_get_screen_size")                                           
+      364 -        return (r["width"], r["height"]) if r else (0, 0)                                      
+      370 +        ok, r = LazyBridge.call_checked("input_get_screen_size")                               
+      371 +        return (r["width"], r["height"]) if ok and r else (0, 0)                               
+      372
+      373
+      374  class CScreenCapture:
+
+● Now fix modules/ui_control.py — the wrappers must return CsInput's bool instead of discarding it.       
+  Reading the full file.
+
+  Read 1 file (ctrl+o to expand)
+
+◎ Cooked for 9m 46s
+
+❯ 'continue
+
+● Now updating all the wrappers to propagate CsInput's bool result instead of returning True
+  unconditionally.
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Update(modules\ui_control.py)
+  └  Added 1 line, removed 2 lines
+      30          logger.error("C# bridge not available — cannot click")
+      31          return False
+      32      try:
+      33 -        CsInput.ClickAt(x, y, button)                                                           
+      34 -        return True                                                                             
+      33 +        return bool(CsInput.ClickAt(x, y, button))                                              
+      34      except Exception as e:
+      35          logger.error("C# ClickAt failed: %s", e)
+      36          return False
+
+● Syntax check on the two core files.
+
+● Bash(cd "c:/Users/Mohan Kumar Indala/Desktop/lab1/raphael" && python -m py_compile hybrid/bridge.py     
+      modules/ui_control.py && echo "COMPILE OK")
+  └  COMPILE OK
+
+● Now the runaway-loop guard in the orchestrator. Let me find the core orchestration loop and how tool    
+  failures are handled.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● The orchestration loop is chat_tool_loop (line 514). Let me read it full to add runaway-loop guardrails 
+
+  Read 1 file (ctrl+o to expand)
+
+● The loop is bounded by max_rounds=8, but it has no guard against the LLM hammering a tool that keeps    
+  failing across rounds. With failures now surfacing truthfully (bridge fix), I'll add a
+  consecutive-failure guard that halts runaway loops. Rewriting the loop body
+
+● Update(orchestrator\core.py)
+  └  Added 21 lines, removed 1 line
+      511          logger.warning("Stream failed after 3 attempts, falling back to non-streaming (r       
+           eason=%s): %s", reason, last_error)
+      512          return self.chat(messages, tools, use_vision_model, reason=reason)
+      513
+      514 +    @staticmethod                                                                              
+      515 +    def _is_failure_result(result: str) -> bool:                                               
+      516 +        """Heuristic: does a tool result string signal a failed execution?"""                  
+      517 +        text = result.strip()                                                                  
+      518 +        if not text:                                                                           
+      519 +            return True                                                                        
+      520 +        low = text.lower()                                                                     
+      521 +        markers = (                                                                            
+      522 +            "failed", "error", "could not", "cannot", "unable to",                             
+      523 +            "not found", "no such", "invalid", "exception", "denied",                          
+      524 +            "timed out", "timeout", "command not recognized", "received no response",          
+      525 +        )                                                                                      
+      526 +        return any(m in low for m in markers)                                                  
+      527 +                                                                                               
+      528      def chat_tool_loop(self, messages: list[dict], schemas: list[dict],
+      529                         executor: ToolExecutor, max_rounds: int = 8,
+      530                         reason: str = "tool_loop") -> str:
+      517 -        """Run a multi-turn tool-calling loop. Returns final text response."""                 
+      531 +        """Run a multi-turn tool-calling loop. Returns final text response.                    
+      532 +                                                                                               
+      533 +        Guards against runaway loops: if a tool fails repeatedly in consecutive                
+      534 +        rounds, the LLM is instructed to stop calling it instead of retrying it                
+      535 +        indefinitely.                                                                          
+      536 +        """                                                                                    
+      537          msgs = list(messages)
+      538 +        _failure_counts: dict[str, int] = {}                                                   
+      539          for _ in range(max_rounds):
+      540              response = self.chat(msgs, schemas, reason=reason)
+      541              if not response or not hasattr(response, "content"):
+
+● Now add the failure-tracking logic after the tool results are appended.
+
+● Update(orchestrator\core.py)
+  └  Added 18 lines
+      595                          "tool_call_id": tool_call.id,
+      596                          "content": _tool_results.get(tool_call.id, "Error: tool result m       
+           issing"),
+      597                      })
+      598 +                                                                                               
+      599 +                # Guard: halt repeated failures of the same tool across rounds                 
+      600 +                for tc in response.tool_calls:                                                 
+      601 +                    if self._is_failure_result(_tool_results.get(tc.id, "")):                  
+      602 +                        _failure_counts[tc.function.name] = _failure_counts.get(tc.funct       
+          +ion.name, 0) + 1                                                                               
+      603 +                        if _failure_counts[tc.function.name] >= 3:                             
+      604 +                            logger.warning("Tool %s failed %d consecutive times; telling       
+          + LLM to stop",                                                                                 
+      605 +                                           tc.function.name, _failure_counts[tc.function       
+          +.name])                                                                                        
+      606 +                            msgs.append({                                                      
+      607 +                                "role": "system",                                              
+      608 +                                "content": (                                                   
+      609 +                                    f"The tool '{tc.function.name}' has failed repeatedl       
+          +y "                                                                                            
+      610 +                                    f"({_failure_counts[tc.function.name]} consecutive a       
+          +ttempts). "                                                                                    
+      611 +                                    "Stop calling it. Try a different, simpler approach        
+          +or tell the user "                                                                             
+      612 +                                    "that the action could not be completed."                  
+      613 +                                ),                                                             
+      614 +                            })                                                                 
+      615 +                            _failure_counts[tc.function.name] = 0                              
+      616              else:
+      617                  return response.content or ""
+      618          return "(reached max rounds without final response)"
+
+● Compile-check core.py.
+
+● Bash(cd "c:/Users/Mohan Kumar Indala/Desktop/lab1/raphael" && python -m py_compile orchestrator/core.py 
+      && echo "COMPILE OK")
+  └  COMPILE OK
+
+● Task #3 done. Let me quickly verify the bridge module imports cleanly (no NameError from the refactor   
+
+● Bash(cd "c:/Users/Mohan Kumar Indala/Desktop/lab1/raphael" && python -c "import hybrid.bridge as b;     
+      print('CInputSimulator.ClickAt ->', b.CInputSimulator.ClickAt.__n…)
+  └  CInputSimulator.ClickAt -> ClickAt
+     call_checked defined: True
+  └  Interrupted · What should OpenClaude do instead?
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────❯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  deepseek-v4-flash-free · ctx 61K/200K (31%) ● high · /effort
+                                                             
