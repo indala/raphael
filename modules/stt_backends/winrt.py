@@ -20,19 +20,49 @@ import contextlib
 
 logger = logging.getLogger(__name__)
 
+# WinRT projections are imported lazily via _load_winrt() — never at module
+# level. Loading WinRT's native DLLs before onnxruntime breaks onnxruntime's
+# DLL initialization on Windows (ERROR_DLL_INIT_FAILED), which silently
+# degrades the silero VAD gate to the energy fallback. These globals are
+# bound by _load_winrt() on first successful import.
 _WINRT_AVAILABLE = False
-try:
-    import winrt.windows.foundation.collections  # noqa: F401 — pre-import IVector proxy
-    from winrt.windows.media.speechrecognition import (
-        SpeechRecognizer,
-        SpeechRecognitionResultStatus,
-        SpeechRecognizerState,
-        SpeechRecognitionTopicConstraint,
-        SpeechRecognitionScenario,
-    )
-    _WINRT_AVAILABLE = True
-except ImportError:
-    logger.debug("winrt package not available — WinRT STT backend disabled")
+
+SpeechRecognizer = None
+SpeechRecognitionResultStatus = None
+SpeechRecognizerState = None
+SpeechRecognitionTopicConstraint = None
+SpeechRecognitionScenario = None
+
+
+def _load_winrt() -> bool:
+    """Import WinRT projections on first use; report whether they work.
+
+    onnxruntime is imported first so it is always resident before WinRT's
+    native DLLs enter the process — the ordering that avoids the DLL init
+    conflict regardless of which code path triggers this loader.
+    """
+    global _WINRT_AVAILABLE
+    global SpeechRecognizer, SpeechRecognitionResultStatus
+    global SpeechRecognizerState, SpeechRecognitionTopicConstraint, SpeechRecognitionScenario
+    if _WINRT_AVAILABLE:
+        return True
+    try:
+        import onnxruntime  # noqa: F401 — must precede WinRT native DLLs
+    except ImportError:
+        pass  # onnxruntime absent → nothing to conflict with later
+    try:
+        import winrt.windows.foundation.collections  # noqa: F401 — pre-import IVector proxy
+        from winrt.windows.media.speechrecognition import (
+            SpeechRecognizer,
+            SpeechRecognitionResultStatus,
+            SpeechRecognizerState,
+            SpeechRecognitionTopicConstraint,
+            SpeechRecognitionScenario,
+        )
+        _WINRT_AVAILABLE = True
+    except ImportError:
+        logger.debug("winrt package not available — WinRT STT backend disabled")
+    return _WINRT_AVAILABLE
 
 # Known Windows speech-engine HRESULT codes (as signed 32-bit).
 _WINERR_INTERNAL_SPEECH = -2147199584  # "Internal Speech Error" — typically when running elevated
@@ -99,7 +129,7 @@ class WinRTBackend(STTBackend):
 
     @property
     def supports_streaming(self) -> bool:
-        return _WINRT_AVAILABLE
+        return _load_winrt()
 
     def start_streaming(self, on_partial):
         """Start continuous dictation on a background thread.
@@ -109,7 +139,7 @@ class WinRTBackend(STTBackend):
         init failure it returns ``False`` so the caller's fallback chain
         (groq, whisper_local) can take over instead of a silently dead winrt.
         """
-        if not _WINRT_AVAILABLE:
+        if not _load_winrt():
             raise SetupError(
                 tool="WinRT STT",
                 hint="Install winrt: pip install winrt-runtime "
@@ -149,7 +179,7 @@ class WinRTBackend(STTBackend):
         return True
 
     def health(self) -> bool:
-        if not _WINRT_AVAILABLE:
+        if not _load_winrt():
             return False
         return not (self._thread and not self._thread.is_alive())
 

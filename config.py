@@ -74,6 +74,30 @@ STT_AUDIO_INPUT_AVAILABLE = True
 STT_LOG_IGNORED = True
 STT_ACTIVE_LISTENING_TIMEOUT = 300
 
+# ── Voice pipeline (VAD gate) — Rhasspy-style wake→VAD→ASR ──
+# When enabled, the mic is gated by a voice-activity detector instead of
+# streaming continuously to an ASR engine. Requires a batch-capable STT
+# backend (winrt is streaming-only and excluded). Degrades gracefully.
+STT_USE_VAD_GATE = os.getenv("STT_USE_VAD_GATE", "true").lower() in ("1", "true", "yes")
+# Batch ASR backends used for on-demand utterances (winrt cannot batch)
+STT_BATCH_PREFERRED_BACKENDS = os.getenv(
+    "STT_BATCH_PREFERRED_BACKENDS", "whisper_local,groq"
+).split(",")
+# VAD engine: "auto" (silero if model present, else energy), "silero", "energy"
+VAD_ENGINE = os.getenv("VAD_ENGINE", "auto")
+# silero-vad ONNX model (download silero_vad.onnx here to enable it)
+VAD_MODEL_PATH = os.getenv(
+    "VAD_MODEL_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "models", "silero_vad.onnx"),
+)
+VAD_RMS_THRESHOLD = float(os.getenv("VAD_RMS_THRESHOLD", "0.005"))
+# Max length (ms) of a wake-word probe utterance
+STT_WAKE_PROBE_MS = int(os.getenv("STT_WAKE_PROBE_MS", "1500"))
+# Min utterance length (ms) before ASR is attempted
+STT_MIN_UTTERANCE_MS = int(os.getenv("STT_MIN_UTTERANCE_MS", "350"))
+# Frames (32 ms each) of trailing silence that end an utterance
+STT_VAD_TAIL_FRAMES = int(os.getenv("STT_VAD_TAIL_FRAMES", "10"))
+
 # Cloud STT fallback keys
 # Cloud STT API keys are shared with LLM backend config above
 

@@ -476,8 +476,20 @@ class RaphaelController(QObject):
             from modules.stt import create_detector
             self.vad_detector = create_detector()
 
+            # The VAD-gated pipeline owns wake/listening transitions itself;
+            # the streaming detectors rely on the controller's text matching.
+            gated_mode = False
+            try:
+                from modules.voice_pipeline import GatedDetector
+                gated_mode = isinstance(self.vad_detector, GatedDetector)
+            except Exception:
+                gated_mode = False
+            self._gated_vad = gated_mode
+
             def handle_state_change(new_state):
-                if state.wake_word_required and new_state in ("LISTENING", "IDLE"):
+                if gated_mode:
+                    self.ui.set_state(new_state)
+                elif state.wake_word_required and new_state in ("LISTENING", "IDLE"):
                     self.ui.set_state("SLEEPING")
                 else:
                     self.ui.set_state(new_state)
@@ -492,7 +504,10 @@ class RaphaelController(QObject):
                 self._enter_chat_mode()
                 return
 
-            if self.wake_word_required_by_default:
+            if gated_mode:
+                # GatedDetector emitted its initial state during start()
+                logger.info("Voice detection active (VAD-gated pipeline)")
+            elif self.wake_word_required_by_default:
                 self.ui.set_state("SLEEPING")
                 logger.info("Voice detection active (Wake word required)")
             else:
@@ -613,9 +628,14 @@ class RaphaelController(QObject):
                 break
 
         if state.wake_word_required and not wake_detected:
-            if getattr(config, "STT_LOG_IGNORED", False):
-                logger.debug("Wake word required: ignored transcription '%s'", transcription)
-            return
+            # The VAD-gated pipeline enforces the wake word itself; commands
+            # it emits (wake_handled) must not be re-gated on the wake text.
+            if getattr(self.vad_detector, "wake_handled", False):
+                logger.debug("Gated pipeline already handled wake word; accepting command")
+            else:
+                if getattr(config, "STT_LOG_IGNORED", False):
+                    logger.debug("Wake word required: ignored transcription '%s'", transcription)
+                return
 
         if wake_detected:
             state.wake_word_required = False
@@ -651,6 +671,39 @@ class RaphaelController(QObject):
 
     # ── Memory consolidation ────────────────────────────────────────
 
+    def _save_mechanical_session_summary(self, history: list[dict]):
+        """Write a 1-2 sentence 'where we left off' note at session end.
+
+        Mechanical (no LLM call): last user message + last assistant reply,
+        truncated. The Morning Briefing routine pops it once via
+        ``pop_last_session`` so it surfaces exactly once.
+        """
+        try:
+            from memory.memory_manager import save_session_summary
+            last_user = last_assistant = ""
+            for turn in reversed(history):
+                content = (turn.get("content") or "").strip()
+                role = turn.get("role", "")
+                if not content or content == "(interrupted)":
+                    continue
+                if role == "assistant" and not last_assistant:
+                    last_assistant = content
+                elif role == "user" and not last_user:
+                    last_user = content
+                if last_user and last_assistant:
+                    break
+            parts = []
+            if last_user:
+                parts.append(f"Last you said: {last_user[:180]}")
+            if last_assistant:
+                parts.append(f"Raphael replied: {last_assistant[:180]}")
+            summary = " | ".join(parts)
+            if len(summary) > 380:
+                summary = summary[:380].rsplit(" ", 1)[0] + "..."
+            save_session_summary(summary)
+        except Exception as e:
+            logger.error("Failed to save mechanical session summary: %s", e)
+
     def _run_idle_consolidation(self):
         if not self.raphael:
             return
@@ -658,6 +711,7 @@ class RaphaelController(QObject):
             from orchestrator.memory_agent import consolidate_memory
             history_copy = list(self.raphael.history)
             consolidate_memory(history_copy)
+            self._save_mechanical_session_summary(history_copy)
         except Exception as e:
             logger.error("Background memory consolidation failed: %s", e)
             self.ui.write_log("err", f"[Memory Agent] Optimization failed: {e}")

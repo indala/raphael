@@ -491,3 +491,74 @@ def delete_memory_key(category: str, key: str) -> str:
     return f"Key '{key}' not found in category '{category}'."
 
 
+# ──────────────────────────────────────────────
+#  Consumed session summaries (Mark-XLVII pattern)
+#  A short "where we left off" note written at session end and
+#  surfaced once (then deleted) so it never repeats in a briefing.
+# ──────────────────────────────────────────────
+
+SESSION_SUMMARIES_PATH = config.ROAMING_DIR / "memory" / "session_summaries.json"
+MAX_SESSION_SUMMARIES = 3
+
+
+def save_session_summary(summary: str) -> None:
+    """Record a 1-2 sentence session summary; keep only the newest MAX_SESSION_SUMMARIES."""
+    if not summary or not summary.strip():
+        return
+    # Read-modify-write is fully inside _lock so concurrent writers never
+    # clobber each other's appends.
+    with _lock:
+        try:
+            summaries = _load_session_summaries()
+            summaries.append(
+                {"date": datetime.now().strftime("%Y-%m-%d %H:%M"), "summary": summary.strip()}
+            )
+            # Keep the most recent entries (oldest first, so pop from the end gives newest).
+            summaries = summaries[-MAX_SESSION_SUMMARIES:]
+            SESSION_SUMMARIES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SESSION_SUMMARIES_PATH.write_text(
+                json.dumps(summaries, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.error("Failed to save session summary: %s", e)
+
+
+def pop_last_session() -> str | None:
+    """Return the newest session summary AND delete it, so it never repeats.
+
+    Mirrors Mark-XLVII's ``pop_last_session`` (return-and-consume). Returns
+    None when there is nothing to surface.
+    """
+    # Read-modify-write is fully inside _lock so a concurrent save can never
+    # interleave between the read and the delete.
+    with _lock:
+        try:
+            summaries = _load_session_summaries()
+            if not summaries:
+                return None
+            newest = summaries[-1]  # newest is last
+            SESSION_SUMMARIES_PATH.write_text(
+                json.dumps(summaries[:-1], indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return newest.get("summary")
+        except Exception as e:
+            logger.error("Failed to consume session summary: %s", e)
+            return None
+
+
+def _load_session_summaries() -> list[dict]:
+    """Thread-safe read of the session summaries store (returns [] on any error)."""
+    try:
+        content = SESSION_SUMMARIES_PATH.read_text(encoding="utf-8").strip()
+        if not content:
+            return []
+        data = json.loads(content)
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+

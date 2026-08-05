@@ -14,6 +14,8 @@ Usage::
     progress = TaskManager.build_progress_prompt(task_id)
 """
 
+import json
+import os
 import threading
 import time
 import uuid
@@ -76,6 +78,67 @@ class Task:
         """Check if this task is in a terminal state (can't be mutated further)."""
         return self.status in (TaskState.COMPLETED, TaskState.FAILED, TaskState.KILLED)
 
+    def to_dict(self) -> dict:
+        """Serialize the task to a JSON-safe dict (excludes non-serializable abort_signal)."""
+        return {
+            "id": self.id,
+            "type": self.type,
+            "status": self.status.value,
+            "goal": self.goal,
+            "steps": [
+                {
+                    "id": s.id,
+                    "description": s.description,
+                    "tool_name": s.tool_name,
+                    "status": s.status,
+                    "timestamp": s.timestamp,
+                }
+                for s in self.steps
+            ],
+            "sub_task_ids": list(self.sub_task_ids),
+            "result": self.result,
+            "error": self.error,
+            "created": self.created,
+            "completed": self.completed,
+            "output_file": self.output_file,
+            "output_offset": self.output_offset,
+            "max_tokens": self.max_tokens,
+            "max_cost_usd": self.max_cost_usd,
+            "tokens_used": self.tokens_used,
+            "cost_usd": self.cost_usd,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Task":
+        """Rehydrate a Task from a serialized dict. A fresh abort_signal is created."""
+        return Task(
+            id=d["id"],
+            type=d.get("type", "main"),
+            status=TaskState(d.get("status", TaskState.PENDING.value)),
+            goal=d.get("goal", ""),
+            steps=[
+                TaskStep(
+                    id=s["id"],
+                    description=s.get("description", ""),
+                    tool_name=s.get("tool_name", ""),
+                    status=s.get("status", "completed"),
+                    timestamp=s.get("timestamp", 0.0),
+                )
+                for s in d.get("steps", [])
+            ],
+            sub_task_ids=list(d.get("sub_task_ids", [])),
+            result=d.get("result"),
+            error=d.get("error"),
+            created=d.get("created", time.time()),
+            completed=d.get("completed"),
+            output_file=d.get("output_file", ""),
+            output_offset=d.get("output_offset", 0),
+            max_tokens=d.get("max_tokens"),
+            max_cost_usd=d.get("max_cost_usd"),
+            tokens_used=d.get("tokens_used", 0),
+            cost_usd=d.get("cost_usd", 0.0),
+        )
+
 
 class TaskManager:
     """Singleton task lifecycle manager.
@@ -90,12 +153,81 @@ class TaskManager:
     _current_task_id: str | None = None
     TASK_OUTPUT_DIR = config.DATA_DIR / "task_outputs"
 
+    # Durable-execution checkpoint: full task state is persisted here on every
+    # transition so tasks survive process crashes/restarts (LangGraph-style).
+    TASK_CHECKPOINT_FILE = config.DATA_DIR / "tasks" / "tasks.json"
+
     # Prefix map for readable task IDs (mirrors OpenClaude's prefix scheme)
     TASK_ID_PREFIXES: ClassVar[dict[str, str]] = {"main": "m", "sub_agent": "a", "background": "b", "workflow": "w"}
 
     # ── Lifecycle ────────────────────────────────────────────────
 
     TERMINAL_STATES = frozenset({TaskState.COMPLETED, TaskState.FAILED, TaskState.KILLED})
+
+    # ── Checkpoint Persistence (durable execution) ────────────────
+    # Every state-machine transition is written to disk so a crash/restart does not
+    # lose in-flight task state. Mirrors the atomic-JSON pattern in goals/goal_manager.
+
+    @classmethod
+    def _checkpoint_path(cls) -> Path:
+        """Return (and ensure parent exists for) the checkpoint path."""
+        cls.TASK_CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        return cls.TASK_CHECKPOINT_FILE
+
+    @classmethod
+    def _save_checkpoint(cls) -> None:
+        """Atomically persist all tasks. Best-effort — must be called while holding _lock."""
+        try:
+            path = cls._checkpoint_path()
+            data = {tid: t.to_dict() for tid, t in cls._tasks.items()}
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            # Never let disk failure break the task flow — best-effort only
+            pass
+
+    @classmethod
+    def _load_checkpoint(cls) -> dict[str, Task]:
+        """Read persisted tasks from disk into a fresh dict (no _tasks mutation)."""
+        path = cls.TASK_CHECKPOINT_FILE
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return {}
+            return {tid: Task.from_dict(d) for tid, d in data.items()}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return {}
+
+    @classmethod
+    def recover_interrupted(cls, message: str | None = None) -> int:
+        """Restore tasks from the last checkpoint and repair interrupted ones.
+
+        Durable-execution recovery (borrowed from LangGraph's checkpointing): after a
+        crash or restart, tasks that were mid-flight (PENDING/RUNNING) cannot be resumed
+        without a driver, so they are marked FAILED so no caller treats them as live
+        zombies. Terminal tasks (COMPLETED/FAILED/KILLED) are preserved verbatim so the
+        full state-machine history survives the restart.
+
+        Returns the number of tasks recovered from disk.
+        """
+        label = message or "Interrupted: Raphael restarted before this task finished."
+        with cls._lock:
+            loaded = cls._load_checkpoint()
+            if not loaded:
+                return 0
+            cls._tasks.clear()
+            cls._tasks.update(loaded)
+            now = time.time()
+            for task in cls._tasks.values():
+                if task.status in (TaskState.PENDING, TaskState.RUNNING):
+                    task.status = TaskState.FAILED
+                    task.completed = now
+                    task.error = label
+            cls._save_checkpoint()
+            return len(loaded)
 
     @classmethod
     def _assert_not_terminal(cls, task_id: str) -> bool:
@@ -124,6 +256,7 @@ class TaskManager:
             cls._tasks[task_id] = task
             if task_type == "main":
                 cls._current_task_id = task_id
+            cls._save_checkpoint()
         return task_id
 
     @classmethod
@@ -134,6 +267,7 @@ class TaskManager:
             return False
         with cls._lock:
             task.status = TaskState.RUNNING
+            cls._save_checkpoint()
         return True
 
     @classmethod
@@ -146,6 +280,7 @@ class TaskManager:
             task.status = TaskState.COMPLETED
             task.completed = time.time()
             task.result = result
+            cls._save_checkpoint()
         return True
 
     @classmethod
@@ -158,6 +293,7 @@ class TaskManager:
             task.status = TaskState.FAILED
             task.completed = time.time()
             task.error = error
+            cls._save_checkpoint()
         return True
 
     @classmethod
@@ -169,6 +305,7 @@ class TaskManager:
         with cls._lock:
             task.status = TaskState.KILLED
             task.completed = time.time()
+            cls._save_checkpoint()
         return True
 
     # ── Steps ────────────────────────────────────────────────────
@@ -180,8 +317,10 @@ class TaskManager:
         task = cls._get(task_id)
         if not task:
             return False
-        task.max_tokens = max_tokens
-        task.max_cost_usd = max_cost_usd
+        with cls._lock:
+            task.max_tokens = max_tokens
+            task.max_cost_usd = max_cost_usd
+            cls._save_checkpoint()
         return True
 
     @classmethod
@@ -190,8 +329,10 @@ class TaskManager:
         task = cls._get(task_id)
         if not task:
             return False
-        task.tokens_used += tokens
-        task.cost_usd += cost
+        with cls._lock:
+            task.tokens_used += tokens
+            task.cost_usd += cost
+            cls._save_checkpoint()
         return True
 
     @classmethod
@@ -231,6 +372,7 @@ class TaskManager:
         )
         with cls._lock:
             task.steps.append(step)
+            cls._save_checkpoint()
         return step.id
 
     @classmethod
@@ -285,6 +427,7 @@ class TaskManager:
                 tid: t for tid, t in cls._tasks.items()
                 if t.status not in terminal
             }
+            cls._save_checkpoint()
             return before - len(cls._tasks)
 
     # ── Output Persistence (disk-backed task output) ─────────────
@@ -353,6 +496,7 @@ class TaskManager:
             if task.status in (TaskState.RUNNING, TaskState.PENDING):
                 task.status = TaskState.KILLED
                 task.completed = time.time()
+                cls._save_checkpoint()
 
         # Cascade to sub-tasks
         for sub_id in list(task.sub_task_ids):

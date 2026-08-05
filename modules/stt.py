@@ -283,6 +283,22 @@ def create_detector():
     process_isolation = getattr(config, "STT_PROCESS_ISOLATION", True)
     logger.info("STT: process_isolation=%s", process_isolation)
 
+    # ── VAD gate (Rhasspy-style wake→VAD→ASR) ──
+    # Default on: the mic is gated by a voice-activity detector instead of
+    # streaming continuously. Falls back to the classic detectors if the
+    # gate cannot run (no batch STT backend, missing audio layer).
+    if getattr(config, "STT_USE_VAD_GATE", True):
+        try:
+            from modules.voice_pipeline import GatedDetector
+
+            gated = GatedDetector()
+            if gated.available():
+                logger.info("STT: using VAD-gated pipeline (batch=%s)", gated._batch_backends)
+                return gated
+            logger.warning("STT: VAD gate unavailable (no batch backend) — streaming fallback")
+        except Exception as e:
+            logger.warning("STT: VAD gate init failed (%s) — streaming fallback", e)
+
     if process_isolation:
         return IsolatedDetector()
     else:

@@ -856,6 +856,16 @@ class RaphaelOrchestrator:
         except Exception:
             pass
 
+        # Durable-execution recovery: restore task checkpoints and repair tasks
+        # interrupted by the previous shutdown (LangGraph-style checkpointing).
+        try:
+            from orchestrator.task_manager import TaskManager
+            recovered = TaskManager.recover_interrupted()
+            if recovered:
+                logger.info("Recovered %d task(s) from checkpoint", recovered)
+        except Exception:
+            logger.exception("Task checkpoint recovery failed")
+
         self.llm = LLMClient()
         self.executor = ToolExecutor()
         self.tool_schemas = get_tool_schemas()

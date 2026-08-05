@@ -177,7 +177,22 @@ class RoutineEngine:
         def _run():
             try:
                 if routine.action_type == "prompt" and self._orchestrator_cb:
-                    self._orchestrator_cb(routine.action_value)
+                    prompt = routine.action_value
+                    # Morning Briefing consumes the newest session summary
+                    # (return-and-delete) so it surfaces "where we left off"
+                    # exactly once and never repeats in a later briefing.
+                    if "morning" in routine.name.lower() or "briefing" in routine.name.lower():
+                        try:
+                            from memory.memory_manager import pop_last_session
+                            last_session = pop_last_session()
+                        except Exception:
+                            last_session = None
+                        if last_session:
+                            prompt = (
+                                f"Recent session to pick up from: {last_session}\n\n"
+                                f"{prompt}\nOpen with a natural acknowledgment of that recent session."
+                            )
+                    self._orchestrator_cb(prompt)
                 elif routine.action_type == "workflow":
                     from workflows.executor import execute_workflow
                     from workflows import load_workflow

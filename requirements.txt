@@ -65,6 +65,8 @@ mutagen>=1.47.0         # Audio metadata tags
 # cryptography>=42.0.0       # Dashboard auth / token storage
 # kokoro>=0.9                # Offline TTS (~330 MB model on first run)
 yt-dlp>=2026.0.0            # YouTube audio search and downloader
+onnxruntime>=1.17.0         # ONNX runtime (silero-vad wake→VAD→ASR gate)
+silero-vad>=5.1.1           # Voice Activity Detection for the VAD gate
 
 # ── Testing ──────────────────────────────────────────────────────────
 pytest>=8.0.0               # Test framework (pytest -v tests/)
