@@ -15,7 +15,7 @@ from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 
 import config
 from controller.state import state
-from orchestrator.proactive import ProactiveEngine
+from orchestrator.proactive_engine import ProactiveEngine
 from orchestrator.startup import StartupManager
 import contextlib
 
@@ -111,12 +111,15 @@ class RaphaelController(QObject):
         self._last_interaction_time = time.time()
         self._consolidation_triggered = False
 
-        # ── Proactive Engine (idle check-ins) ──
+        # ── Proactive Engine (idle check-ins + topic monitoring) ──
         self.proactive_engine = ProactiveEngine(
             submit_cb=self._submit_proactive,
             get_idle_time_cb=lambda: time.time() - self._last_interaction_time,
+            storage_dir=config.PROACTIVE_STORAGE_DIR,
             cooldown=config.PROACTIVE_COOLDOWN,
             min_interval=config.PROACTIVE_MIN_INTERVAL,
+            topics_enabled=config.PROACTIVE_TOPICS_ENABLED,
+            ddg_check_interval_hours=config.PROACTIVE_DDG_CHECK_INTERVAL_HOURS,
         )
         self.proactive_engine.set_enabled(config.PROACTIVE_ENABLED)
 
@@ -562,9 +565,10 @@ class RaphaelController(QObject):
                 self.ui.write_log("sys", "[Memory Agent] Memory optimization in progress...")
                 threading.Thread(target=self._run_idle_consolidation, daemon=True).start()
 
-        # Proactive check during idle time
+        # Proactive check during idle time (includes topic monitors + reminders)
         if not state.muted and not state.wake_word_required:
             self.proactive_engine.check()
+            self.proactive_engine.on_check_complete()
 
         if not self.vad_detector or not state.audio_input_available:
             return

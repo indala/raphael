@@ -40,11 +40,60 @@ class BaseAgent(ABC):
 
     def can_handle(self, query: str) -> float:
         """
-        Agents no longer self-route via keywords.
-        Raphael or the Manager Agent decides when to delegate based on description.
+        LLM-based intent routing with description matching.
 
-        Returns 0.0 (no automatic routing). Override only for special cases.
+        When agent memory is empty (cold start), uses a lightweight LLM call
+        to match the query against this agent's description. Returns confidence
+        0.0-1.0 based on semantic similarity.
+
+        Once memory accumulates, can_handle_evolved() adds memory-based adjustments.
         """
+        # Check if agent has memory — if so, defer to evolved routing
+        try:
+            from memory.agent_memory import _load
+            memory = _load()
+            agent_data = memory.get(self.name, {})
+            has_memory = bool(
+                agent_data.get("interactions") or 
+                agent_data.get("corrections") or 
+                agent_data.get("rules")
+            )
+            if has_memory:
+                # Memory exists — let can_handle_evolved() handle routing
+                return 0.0
+        except Exception:
+            pass
+
+        # Cold start — use LLM-based description matching
+        if not self.description or not query:
+            return 0.0
+
+        try:
+            from orchestrator.core import LLMClient
+            client = LLMClient()
+            
+            prompt = (
+                f"You are a routing classifier. Determine if this query matches the agent's capability.\n\n"
+                f"Agent: {self.name}\n"
+                f"Description: {self.description}\n\n"
+                f"Query: {query}\n\n"
+                "Output ONLY a confidence score 0.0-1.0 where:\n"
+                "- 0.0-0.3: Not a match\n"
+                "- 0.4-0.6: Possible match\n"
+                "- 0.7-1.0: Strong match\n\n"
+                "Output ONLY the number (e.g. '0.75'), no explanation."
+            )
+            
+            messages = [{"role": "system", "content": prompt}]
+            resp = client.chat(messages, tools=None, reason="agent_routing_seed")
+            
+            if resp and hasattr(resp, "content") and resp.content:
+                score_text = resp.content.strip()
+                score = float(score_text)
+                return max(0.0, min(1.0, score))
+        except Exception:
+            pass
+        
         return 0.0
 
     @abstractmethod

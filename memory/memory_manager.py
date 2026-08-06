@@ -1,35 +1,70 @@
 """
 Persistent long-term memory for Raphael.
 
-Stores categorized information (identity, preferences, projects, relationships,
-wishes, notes) in a single JSON file with automatic trimming to keep within limits.
-Thread-safe for concurrent read/write.
+**Storage Backend: SQLite + FTS5** (as of task #3 enhancement)
+  - Unlimited memory size (no 2200-char cap)
+  - Full-text search via SQLite FTS5 built-in
+  - Thread-safe, WAL mode for concurrent access
+  - Auto-migration from legacy JSON on first use
+
+**Backward Compatibility**
+  - All existing callers continue to work unchanged
+  - load_memory() / save_memory() preserved
+  - format_memory_for_prompt() unchanged
+
+**New Capabilities**
+  - search_memory(query) — semantic keyword search
+  - No memory size limit (was 2200 chars total)
+  - Thread-safe concurrent access
+
+Stores categorized information in 6 categories:
+  - user_memory: identity, preferences, profile
+  - daily_task_memory: tasks, routines, deadlines
+  - chat_memory: conversation highlights
+  - feature_memory: tool settings, preferences
+  - capability_memory: why tools exist, impact
+  - planning_memory: successful execution plans
 """
 
 import json
 import logging
-import time as _time
 from datetime import datetime
-from threading import Lock
 
 logger = logging.getLogger(__name__)
 
-
 import config
 
-# --- Path resolution ---
+# ── Storage backend selection ────────────────────────────────────────────────
+# SQLite is the default. JSON fallback is kept for environments where SQLite
+# fails to initialize (rare, but possible in restricted environments).
+
+_USE_SQLITE = True  # Set to False to force JSON fallback
+
+try:
+    from memory.sqlite_store import get_store as _get_sqlite_store
+    _store = _get_sqlite_store()
+    logger.info("Memory backend: SQLite + FTS5")
+except Exception as e:
+    logger.warning("SQLite backend unavailable (%s) — falling back to JSON", e)
+    _USE_SQLITE = False
+    _store = None
+
+
+# ── Legacy JSON path (kept as fallback) ──────────────────────────────────────
 MEMORY_PATH = config.ROAMING_DIR / "memory" / "long_term.json"
 
-_lock = Lock()
 
-# --- Limits ---
-MAX_VALUE_LENGTH = 380        # per-entry value truncation
-MEMORY_MAX_CHARS = 2200       # total JSON size before trimming
+from threading import Lock
 
-# --- Read cache ---
+# --- Legacy JSON limits (only used when SQLite unavailable) ---
+MAX_VALUE_LENGTH = 380
+MEMORY_MAX_CHARS = 2200
+
+# --- Read cache (used by JSON fallback path) ---
 _cached_memory: dict | None = None
 _cached_memory_time: float = 0.0
 MEMORY_CACHE_TTL: float = 5.0  # seconds
+_lock = Lock()
 
 
 def _empty_memory() -> dict:
@@ -44,52 +79,83 @@ def _empty_memory() -> dict:
     }
 
 
-def _migrate_legacy_memory_unlocked(data: dict) -> dict:
-    """Migrate legacy 6-category memory structure to the new layout without acquiring lock (since it's already held)."""
-    new_data = _empty_memory()
-
-    def copy_cat(old_cat, new_cat):
-        for k, v in data.get(old_cat, {}).items():
-            if isinstance(v, dict) and "value" in v:
-                new_data[new_cat][k] = v
-            else:
-                new_data[new_cat][k] = {
-                    "value": str(v),
-                    "updated": datetime.now().strftime("%Y-%m-%d")
-                }
-
-    copy_cat("identity", "user_memory")
-    copy_cat("preferences", "user_memory")
-    copy_cat("relationships", "user_memory")
-    copy_cat("wishes", "user_memory")
-    copy_cat("notes", "user_memory")
-
-    copy_cat("projects", "daily_task_memory")
-
-    try:
-        new_data = _trim_to_limit(new_data)
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(new_data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        logger.info("Migrated legacy memory to new 4-category layout.")
-    except Exception as e:
-        logger.error("Failed to write migrated memory: %s", e)
-
-    return new_data
-
-
-# ──────────────────────────────────────────────
-#  Read / Write
-# ──────────────────────────────────────────────
-
-
 def load_memory() -> dict:
-    """Load memory from disk (cached, invalidated on save). Returns empty skeleton on any error."""
+    """Load memory from the active backend (SQLite or JSON fallback).
+    
+    Returns a nested dict matching the legacy format:
+        {category: {key: {value: str, updated: str}}}
+    """
+    if _USE_SQLITE and _store is not None:
+        try:
+            return _store.load_all()
+        except Exception as e:
+            logger.error("SQLite load failed: %s — falling back to JSON", e)
+    return _load_memory_json()
+
+
+def save_memory(memory: dict) -> None:
+    """Save memory to the active backend.
+    
+    Accepts a nested dict of the form:
+        {category: {key: {value: str, updated: str}}} 
+    and persists it. Used for bulk replacement (consolidation).
+    """
+    if _USE_SQLITE and _store is not None:
+        try:
+            _save_memory_sqlite(memory)
+            return
+        except Exception as e:
+            logger.error("SQLite save failed: %s — falling back to JSON", e)
+    _save_memory_json(memory)
+
+
+def search_memory(query: str, category: str | None = None, limit: int = 20) -> list[dict]:
+    """Search memory entries using FTS5 full-text search.
+    
+    NEW in SQLite backend — not available in JSON fallback.
+    
+    Args:
+        query:    Natural language query string.
+        category: Optional category filter.
+        limit:    Maximum results.
+        
+    Returns:
+        List of {category, key, value, updated, score} dicts.
+    """
+    if _USE_SQLITE and _store is not None:
+        try:
+            return _store.search(query, category=category, limit=limit)
+        except Exception as e:
+            logger.error("Memory search failed: %s", e)
+    return []
+
+
+def _save_memory_sqlite(memory: dict) -> None:
+    """Bulk-write all categories to SQLite — used by consolidation."""
+    assert _store is not None
+    for category, items in memory.items():
+        if not isinstance(items, dict):
+            continue
+        for key, entry in items.items():
+            if isinstance(entry, dict) and "value" in entry:
+                value = str(entry["value"])
+                updated = entry.get("updated", "")
+            elif isinstance(entry, str):
+                value = entry
+                updated = ""
+            else:
+                continue
+            if value and value.strip():
+                _store.upsert(category, key, value, updated=updated or None)
+
+
+# ── JSON fallback implementations ────────────────────────────────────────────
+
+def _load_memory_json() -> dict:
+    """Load memory from JSON file (fallback when SQLite unavailable)."""
+    import time as _time
     global _cached_memory, _cached_memory_time
 
-    # Serve from cache if still fresh
     now = _time.monotonic()
     if _cached_memory is not None and (now - _cached_memory_time) < MEMORY_CACHE_TTL:
         return _cached_memory
@@ -98,40 +164,18 @@ def load_memory() -> dict:
         _cached_memory = _empty_memory()
         _cached_memory_time = now
         return _cached_memory
+
     with _lock:
         try:
             data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                # Check for legacy categories
                 old_keys = {"identity", "preferences", "projects", "relationships", "wishes", "notes"}
                 if any(key in data for key in old_keys):
                     data = _migrate_legacy_memory_unlocked(data)
-
                 base = _empty_memory()
                 for cat_key in base:
                     if cat_key not in data:
                         data[cat_key] = {}
-                    elif isinstance(data[cat_key], list):
-                        # Convert list-format categories to the expected dict envelope
-                        lst = data[cat_key]
-                        data[cat_key] = {}
-                        for i, item in enumerate(lst):
-                            if isinstance(item, dict):
-                                item_key = item.get("task") or item.get("date") or f"entry_{i}"
-                                item_val = item.get("description") or item.get("summary") or str(item)
-                                data[cat_key][item_key] = {"value": item_val, "updated": item.get("date", "")}
-                            else:
-                                data[cat_key][f"entry_{i}"] = {"value": str(item), "updated": ""}
-                    elif isinstance(data[cat_key], dict):
-                        # Normalise any plain-value entries (not wrapped in {value, updated})
-                        # Only apply to leaf entries (not nested dicts like app_paths)
-                        cat = data[cat_key]
-                        for k, v in list(cat.items()):
-                            if not isinstance(v, dict) or "value" not in v:
-                                # Skip nested dicts (sub-categories like app_paths)
-                                if isinstance(v, dict) and any(isinstance(x, dict) for x in v.values()):
-                                    continue
-                                cat[k] = {"value": str(v), "updated": ""}
                 _cached_memory = data
                 _cached_memory_time = now
                 return data
@@ -139,21 +183,18 @@ def load_memory() -> dict:
             _cached_memory_time = now
             return _cached_memory
         except Exception as e:
-            logger.error("Load error: %s", e)
+            logger.error("JSON load error: %s", e)
             _cached_memory = _empty_memory()
             _cached_memory_time = now
             return _cached_memory
 
 
-def save_memory(memory: dict) -> None:
-    """Trim memory to size limit and atomically write to disk.
-
-    Invalidates the in-memory read cache so the next load_memory() call
-    reads the fresh data from disk.
-    """
+def _save_memory_json(memory: dict) -> None:
+    """Save memory to JSON file (fallback)."""
+    import time as _time
     global _cached_memory, _cached_memory_time
     if not isinstance(memory, dict):
-        return  # type: ignore[unreachable]
+        return
     memory = _trim_to_limit(memory)
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
@@ -237,19 +278,59 @@ def _recursive_update(target: dict, updates: dict) -> bool:
 
 
 def update_memory(memory_update: dict) -> dict:
-    """Apply a partial update and persist. Returns the full memory dict."""
+    """Apply a partial update and persist. Returns the full memory dict.
+    
+    SQLite path: upserts individual entries directly (fast, no full reload).
+    JSON path: loads full dict, merges, saves.
+    """
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
-    memory = load_memory()
+
+    if _USE_SQLITE and _store is not None:
+        try:
+            # Fast path: upsert each changed entry directly
+            changed = False
+            for category, items in memory_update.items():
+                if not isinstance(items, dict):
+                    continue
+                for key, entry in items.items():
+                    if isinstance(entry, dict) and "value" in entry:
+                        value = entry["value"]
+                    elif isinstance(entry, str):
+                        value = entry
+                    elif entry is None:
+                        # Explicit delete
+                        _store.delete(category, key)
+                        changed = True
+                        continue
+                    else:
+                        value = json.dumps(entry, ensure_ascii=False)
+
+                    if value and str(value).strip():
+                        _store.upsert(category, key, str(value)[:MAX_VALUE_LENGTH])
+                        changed = True
+
+            if changed:
+                try:
+                    from orchestrator.memory_agent import _invalidate_context_cache
+                    _invalidate_context_cache()
+                except ImportError:
+                    pass
+                logger.info("Saved (SQLite): %s", list(memory_update.keys()))
+            return load_memory()
+        except Exception as e:
+            logger.error("SQLite update failed: %s — falling back to JSON", e)
+
+    # JSON fallback
+    memory = _load_memory_json()
     if _recursive_update(memory, memory_update):
-        save_memory(memory)
-        # Invalidate the memory-agent context cache so next read picks up fresh data
+        _save_memory_json(memory)
         try:
             from orchestrator.memory_agent import _invalidate_context_cache
             _invalidate_context_cache()
         except ImportError:
             pass
-        logger.info("Saved: %s", list(memory_update.keys()))
+        logger.info("Saved (JSON): %s", list(memory_update.keys()))
     return memory
 
 

@@ -5,6 +5,17 @@ text_priority / vision_priority from settings.toml.
 Each agent type has a capability profile (text vs vision, default effort).
 Endpoints are assigned automatically from the user's priority lists.
 
+User overrides: add an [agents] section to settings.toml to pin specific
+agents to specific endpoints/models:
+
+    [agents.models]
+    coding   = { endpoint = "groq", model = "llama-3.1-70b" }
+    researcher = { endpoint = "openai", model = "gpt-4o" }
+    manager  = { endpoint = "ollama-local", model = "qwen2.5:3b" }
+
+This lets you assign cheap/fast models to simple agents and expensive
+models to reasoning-heavy ones, reducing cost significantly.
+
 Usage:
     from orchestrator.agent_models import create_agent_llm, auto_effort
 
@@ -44,6 +55,101 @@ _AGENT_PROFILES: dict[str, dict] = {
     "tool_manager": {"need": "text",   "effort": "high",
                      "description": "Tool creation pipeline — good reasoning"},
 }
+
+
+# ── User-override model config (from settings.toml [agents.models]) ───────────
+
+_user_agent_models: dict[str, dict] | None = None
+
+
+def _load_user_agent_models() -> dict[str, dict]:
+    """Load [agents.models] overrides from settings.toml (cached).
+
+    Format in settings.toml::
+
+        [agents.models]
+        coding     = { endpoint = "groq", model = "llama-3.1-70b-versatile" }
+        researcher = { endpoint = "openai", model = "gpt-4o" }
+        manager    = { endpoint = "ollama-local", model = "qwen2.5:3b" }
+
+    Returns dict mapping agent_name → {endpoint?, model?, fallback_model?}.
+    Returns empty dict if the section doesn't exist or can't be parsed.
+    """
+    global _user_agent_models
+    if _user_agent_models is not None:
+        return _user_agent_models
+
+    try:
+        from _user_settings.paths import get_config_dir
+        path = get_config_dir() / "settings.toml"
+    except Exception:
+        path = Path.home() / ".raphael" / "settings.toml"
+
+    if not path.exists():
+        _user_agent_models = {}
+        return _user_agent_models
+
+    try:
+        try:
+            import tomllib as _toml_lib
+        except ImportError:
+            import tomli as _toml_lib  # type: ignore[no-redef]
+
+        with open(path, "rb") as f:
+            data = _toml_lib.load(f)
+
+        agents_section = data.get("agents", {})
+        models_section = agents_section.get("models", {})
+
+        if isinstance(models_section, dict):
+            # Normalise: each value should be a dict with optional keys
+            parsed: dict[str, dict] = {}
+            for agent_name, cfg in models_section.items():
+                if isinstance(cfg, dict):
+                    parsed[str(agent_name).lower()] = {
+                        k: str(v) for k, v in cfg.items()
+                        if k in ("endpoint", "model", "fallback_model")
+                    }
+                elif isinstance(cfg, str):
+                    # Simple string shorthand: coding = "groq/llama-3.1-70b"
+                    if "/" in cfg:
+                        ep, _, mdl = cfg.partition("/")
+                        parsed[str(agent_name).lower()] = {"endpoint": ep.strip(), "model": mdl.strip()}
+                    else:
+                        parsed[str(agent_name).lower()] = {"model": cfg.strip()}
+            _user_agent_models = parsed
+            if parsed:
+                logger.info(
+                    "Loaded per-agent model overrides for: %s",
+                    ", ".join(f"{k}→{v.get('endpoint', '?')}/{v.get('model', '?')}"
+                              for k, v in parsed.items()),
+                )
+        else:
+            _user_agent_models = {}
+
+    except ImportError:
+        logger.debug("No TOML parser available — skipping per-agent model config")
+        _user_agent_models = {}
+    except Exception as e:
+        logger.debug("Failed to load [agents.models] from settings.toml: %s", e)
+        _user_agent_models = {}
+
+    return _user_agent_models
+
+
+def reload_user_agent_models() -> None:
+    """Force re-read of [agents.models] on next access (e.g. after Settings UI save)."""
+    global _user_agent_models
+    _user_agent_models = None
+
+
+def get_agent_model_override(agent_name: str) -> dict:
+    """Return the user-configured model override for a specific agent.
+
+    Returns dict with any of: endpoint, model, fallback_model.
+    Returns empty dict if no override exists.
+    """
+    return dict(_load_user_agent_models().get(agent_name.lower(), {}))
 
 
 def _auto_assign_backend(agent_name: str) -> str | None:
@@ -208,6 +314,11 @@ def create_agent_llm(agent_name: str, query: str = "", effort: str = "", **overr
     Backend is auto-selected from ``text_priority`` / ``vision_priority``
     in settings.toml. Models are resolved from the matched endpoint's config.
 
+    User can override per-agent in settings.toml [agents.models] section:
+        [agents.models]
+        coding   = { endpoint = "groq", model = "llama-3.1-70b" }
+        researcher = { endpoint = "openai", model = "gpt-4o" }
+
     Args:
         agent_name: Agent name (e.g., "coding", "researcher")
         query: The user's query (for auto-effort detection)
@@ -222,12 +333,18 @@ def create_agent_llm(agent_name: str, query: str = "", effort: str = "", **overr
 
     _AGENT_PROFILES.get(agent_name, {"need": "text", "effort": "medium"})
 
+    # 1. Check user-configured per-agent model override (settings.toml)
+    user_override = get_agent_model_override(agent_name)
+    if user_override:
+        logger.debug("Agent '%s' using user override: %s", agent_name, user_override)
+        overrides = {**user_override, **overrides}  # CLI overrides > settings.toml
+
     # Determine effort level
     eff = effort or auto_effort(query, agent_name)
     get_effort_config(eff)
 
-    # Resolve backend: override > auto-assign
-    backend = overrides.get("backend") or _auto_assign_backend(agent_name)
+    # Resolve backend: override > user config > auto-assign
+    backend = overrides.get("backend") or overrides.get("endpoint") or _auto_assign_backend(agent_name)
 
     # Resolve model from endpoint registry
     model = overrides.get("model")

@@ -90,7 +90,40 @@ def get_schemas() -> list[dict]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_memories",
+                "description": "Search long-term memory using natural language. Returns the most relevant stored facts matching the query. Use this to check what Raphael knows about a specific topic before asking the user.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Natural language search query, e.g. 'user preferences music', 'daily tasks deadlines'.",
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Optional: filter to a specific category (user_memory, daily_task_memory, chat_memory, feature_memory, capability_memory, planning_memory).",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
     ]
+
+
+def list_memories(query: str, category: str | None = None) -> str:
+    """Search memory entries using FTS5 full-text search."""
+    from memory.memory_manager import search_memory
+    results = search_memory(query, category=category, limit=15)
+    if not results:
+        return f"No memories found matching '{query}'."
+    lines = [f"Memory search results for '{query}':"]
+    for r in results:
+        lines.append(f"  [{r['category']}] {r['key']}: {r['value']}")
+    return "\n".join(lines)
 
 
 def save_memory(category: str, key: str, value: str) -> str:

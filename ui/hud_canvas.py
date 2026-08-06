@@ -261,7 +261,7 @@ class HudCanvas(QWidget):
         gap = 360 / segments - arc_len
         for i in range(segments):
             start = self._ring_rot + i * (arc_len + gap)
-            p.drawArc(rect, int(start * 16), int(arc_len * 16))
+            p.drawArc(rect, int(start * 16), (arc_len * 16))
 
         # Inner ring
         r2 = r - 15
@@ -304,7 +304,7 @@ class HudCanvas(QWidget):
     def _draw_particles(self, p: QPainter):
         for pt in self._particles:
             c = pt["color"]
-            c.setAlpha(int(max(0, min(255, c.alpha() * pt["life"]))))
+            c.setAlpha(max(0, min(255, c.alpha() * pt["life"])))
             p.setBrush(QBrush(c))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawEllipse(QPointF(pt["x"], pt["y"]), pt["size"], pt["size"])

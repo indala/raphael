@@ -103,46 +103,45 @@ class StartupManager:
                                         tool_name="manager_agent"
                                     )
 
-            # 3. Preparing briefing
+            # 3. Preparing briefing using the rich startup_briefing composer
             self.write_log("sys", "Preparing briefing...")
 
             client = LLMClient()
 
             # Warm up KV cache for local LLMs (background thread, non-blocking)
-            # Sends a tiny request so Ollama/vLLM pre-evaluates the system prompt
-            # First-token latency drops from ~10-20s to <1s on subsequent requests
             client.warmup_kv_cache()
 
-            prompt_parts = [
-                "You are Raphael, an advanced AI desktop assistant. The system has just booted and completed startup checks.",
-                "Formulate a warm, personal greeting to welcome the user back."
-            ]
+            # Gather rich context (last session, pending tasks, monitor alerts, time-of-day)
+            from orchestrator.startup_briefing import (
+                gather_briefing_context,
+                compose_briefing_prompt,
+                build_briefing_system_prompt,
+            )
+            ctx = gather_briefing_context()
 
-            prompt_parts.append("\nContext Details:")
-            mem_for_prompt = memory if isinstance(memory, dict) else {}
-            formatted_memory = format_memory_for_prompt(mem_for_prompt)
-            if formatted_memory:
-                prompt_parts.append(formatted_memory)
+            # Log what we found for debugging
+            if ctx.last_session:
+                self.write_log("sys", "Resuming from last session...")
+            if ctx.pending_tasks:
+                self.write_log("sys", f"{len(ctx.pending_tasks)} pending task(s) found.")
+            if ctx.monitor_alerts:
+                self.write_log("sys", f"{len(ctx.monitor_alerts)} new topic alert(s).")
 
-            prompt_parts.append("\nInstructions:")
-            prompt_parts.append("- Check the current date/time in the prompt and select a time-appropriate greeting (e.g. Good morning, Good afternoon, Good evening). Do not say 'good morning' if the current time is afternoon or evening.")
-            prompt_parts.append("- Review the 'Conversation Highlights & History' section in the context details. If there was a previous interaction recorded on today's date (e.g. earlier this morning), welcome the user back and acknowledge that you spoke earlier today.")
-            prompt_parts.append("- Greet the user by name if known (otherwise, welcome them warmly).")
-            prompt_parts.append("- Keep the entire response extremely brief (max 2-3 sentences).")
-            prompt_parts.append("- Do not output any markdown formatting (like bolding, lists, or code blocks) to ensure TTS speaks it cleanly.")
-
-            system_prompt = "\n".join(prompt_parts)
+            briefing_user_prompt = compose_briefing_prompt(ctx)
+            briefing_system      = build_briefing_system_prompt()
 
             messages = [
-                {"role": "system", "content": "You are Raphael, an advanced AI desktop assistant. The system has just booted and completed startup checks."},
-                {"role": "user", "content": system_prompt}
+                {"role": "system", "content": briefing_system},
+                {"role": "user",   "content": briefing_user_prompt},
             ]
             resp = client.chat(messages, None, reason="startup_briefing")
 
-            if resp and resp.content and not resp.content.startswith("[Error calling LLM"):  # type: ignore[union-attr]
+            from orchestrator.error_classifier import _is_llm_error  # type: ignore[attr-defined]
+            from orchestrator.core import _is_llm_error as _check_err
+
+            if resp and resp.content and not _check_err(resp.content):  # type: ignore[union-attr]
                 briefing = resp.content.strip()  # type: ignore[union-attr]
                 self.write_log("ai", briefing)
-                # Speak if TTS enabled
                 if state.tts_enabled:
                     self.speak_cb(briefing)
 
@@ -152,7 +151,6 @@ class StartupManager:
             logger.error("Startup briefing failed: %s", e)
             self.write_log("err", f"Startup error: {e}")
         finally:
-            # Revert to appropriate state if not speaking
             if not state.tts_enabled:
                 if state.muted:
                     self.set_state("MUTED")

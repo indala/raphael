@@ -200,13 +200,63 @@ PARALLEL_SAFE_TOOLS: set[str] = {
 }
 
 
+def normalize_tool_schema(schema: object) -> dict | None:
+    """Normalize a tool schema to the bare function-tool dict form.
+
+    Some modules return schemas already wrapped as OpenAI tool objects:
+      {"type": "function", "function": {"name": ..., ...}}
+    Wrapping those a second time produces a double-nested object whose
+    inner ``function`` dict has no top-level ``name``.  Strict providers
+    (e.g. DeepSeek) reject the *entire* request with HTTP 400
+    ``tools[N].function: missing field name``, silently disabling every
+    tool for the whole turn.
+
+    This helper unwraps already-wrapped schemas and returns ``None`` for
+    anything without a resolvable name so callers can skip-with-warning.
+
+    Adapted from hermes-agent/agent/memory_manager.py (normalize_tool_schema).
+    """
+    if not isinstance(schema, dict):
+        return None
+    # Unwrap an already-wrapped OpenAI tool entry
+    if schema.get("type") == "function" and isinstance(schema.get("function"), dict):
+        schema = schema["function"]
+        if not isinstance(schema, dict):
+            return None
+    name = schema.get("name", "")
+    if not name or not isinstance(name, str):
+        return None
+    return schema  # type: ignore[return-value]
+
+
 def get_tool_schemas() -> list[dict]:
     """Return aggregated JSON schemas from all tool modules + MCP servers."""
     _load_mcp_tools()
     schemas = list(_mcp_schemas or [])
     for mod in _TOOL_MODULES:
         try:
-            schemas.extend(mod.get_schemas())
+            raw_schemas = mod.get_schemas()
+            for raw in raw_schemas:
+                # Unwrap any double-wrapped schemas before storing
+                func = raw.get("function") if isinstance(raw, dict) else None
+                if func is not None:
+                    # Already in OpenAI tool form — validate inner function dict
+                    if normalize_tool_schema(func) is None:
+                        logger.warning(
+                            "Skipping malformed schema from %s (missing 'name'): %s",
+                            mod.__name__, str(raw)[:120],
+                        )
+                        continue
+                    schemas.append(raw)
+                else:
+                    # Bare function schema — wrap it
+                    if normalize_tool_schema(raw) is None:
+                        logger.warning(
+                            "Skipping malformed bare schema from %s: %s",
+                            mod.__name__, str(raw)[:120],
+                        )
+                        continue
+                    schemas.append({"type": "function", "function": raw})
         except Exception as e:
             logger.error("Failed to load schemas from %s: %s", mod.__name__, e)
     return schemas
@@ -293,5 +343,6 @@ __all__ = [
     "get_tool_map",
     "get_tool_schemas",
     "is_generated_tool",
+    "normalize_tool_schema",
     "reload_tools",
 ]

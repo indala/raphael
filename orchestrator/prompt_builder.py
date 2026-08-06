@@ -23,7 +23,7 @@ class SystemPromptBuilder:
     # Curated tool guide (label → tool names). Only names registered in the
     # tool registry are emitted; unregistered names are dropped with a warning.
     _TOOL_GUIDE = (
-        ("Memory", ("save_memory", "recall_memory")),
+        ("Memory", ("save_memory", "recall_memory", "list_memories")),
         ("Search", ("web_search", "web_fetch", "search_online")),
         (
             "System & Volume",

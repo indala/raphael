@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 159
+    assert len(executor.tool_map) == 160
 
 
 def test_tool_executor_has_expected_tools():
@@ -99,6 +99,7 @@ def test_tool_executor_has_expected_tools():
         "save_song",
         "delete_memory_entry",
         "flush_memory",
+        "list_memories",
         "get_immediate_response",
         "play_song",
         "web_fetch_multi",
@@ -280,10 +281,13 @@ def test_subagent_routes_tools_to_standard_profiles():
     assert route_tool_to_subagent("run_command").name == "desktop"
 
 
-@patch("orchestrator.memory_agent.load_memory")
-def test_get_relevant_context_librarian(mock_load_memory):
-    """Test that get_relevant_context extracts core profile and keyword-matches relevant facts."""
-    from orchestrator.memory_agent import get_relevant_context
+@patch("memory.memory_manager.search_memory")
+@patch("memory.memory_manager.load_memory")
+def test_get_relevant_context_librarian(mock_load_memory, mock_search_memory):
+    """Test that get_relevant_context extracts core profile and matches relevant facts."""
+    from orchestrator.memory_agent import _context_cache, get_relevant_context
+
+    _context_cache.clear()  # cache is module-level; isolate from prior calls
 
     mock_load_memory.return_value = {
         "user_memory": {
@@ -299,12 +303,16 @@ def test_get_relevant_context_librarian(mock_load_memory):
             "programming_language": {"value": "Python", "updated": "2026-07-01"}
         }
     }
+    # FTS5 search returns the matching feature entry
+    mock_search_memory.return_value = [
+        {"key": "programming_language", "value": "Python", "category": "feature_memory"},
+    ]
 
     context = get_relevant_context("What programming language do I use?")
 
     assert "Mohan Kumar" in context
     assert "Web Developer" in context
-    # Keyword matching on "programming_language" key finds "Python" value
+    # FTS5 result on "programming_language" key finds "Python" value
     assert "Python" in context
     assert "programming_language" in context
 

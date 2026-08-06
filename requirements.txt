@@ -52,21 +52,13 @@ pdfplumber>=0.10.0      # PDF text + table extraction
 PyPDF2>=3.0.0           # PDF page manipulation (split, merge)
 python-docx>=1.0.0      # Word .docx read/write
 python-pptx>=0.6.23     # PowerPoint .pptx read/write
-openpyxl>=3.1.0         # Excel .xlsx read/write
-mutagen>=1.47.0         # Audio metadata tags
+openpyxl>=3.1.0 # Excel .xlsx read/write
 
-# ── Optional (uncomment if needed) ──────────────────────────────────
-# beautifulsoup4>=4.12       # Web scraping
-# pandas>=2.0.0              # Data file processing
-# send2trash>=1.8.0          # Safe file deletion (desktop agent)
-# fastapi>=0.110.0           # Dashboard server
-# uvicorn>=0.29.0            # ASGI server for dashboard
-# qrcode[pil]>=7.4.0         # QR code generation
-# cryptography>=42.0.0       # Dashboard auth / token storage
-# kokoro>=0.9                # Offline TTS (~330 MB model on first run)
+mutagen>=1.47.0         # Audio metadata tags
 yt-dlp>=2026.0.0            # YouTube audio search and downloader
 onnxruntime>=1.17.0         # ONNX runtime (silero-vad wake→VAD→ASR gate)
 silero-vad>=5.1.1           # Voice Activity Detection for the VAD gate
 
 # ── Testing ──────────────────────────────────────────────────────────
 pytest>=8.0.0               # Test framework (pytest -v tests/)
+pyrefly>=1.2.0

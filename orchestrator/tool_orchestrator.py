@@ -179,6 +179,7 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
     ToolDomain.MEMORY: (
         "recall_memory",
         "save_memory",
+        "list_memories",
         "delete_memory_entry",
         "flush_memory",
         "learn_from_feedback",
@@ -276,6 +277,7 @@ CORE_FALLBACK_TOOLS: Tuple[str, ...] = (
     "write_file",
     "recall_memory",
     "save_memory",
+    "list_memories",
     "set_system_volume",
     "get_system_volume",
     "play_song",

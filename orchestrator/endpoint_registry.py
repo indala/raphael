@@ -91,12 +91,88 @@ def load() -> list[Endpoint]:
 
     API keys are read directly from [[endpoints]] in settings.toml — no env vars.
     The user adds and manages endpoints via the Settings UI.
+    
+    Optionally performs concurrent health probes if ENDPOINT_HEALTH_CHECK is enabled.
     """
     global _loaded
     items = _load_from_settings()
     _loaded = True
     _rebuild_index(items)
+    
+    # Optional: concurrent health check on startup
+    if _should_health_check():
+        _concurrent_health_probe(items)
+    
     return items
+
+
+def _should_health_check() -> bool:
+    """Check if health probing is enabled via config."""
+    try:
+        import config
+        return getattr(config, "ENDPOINT_HEALTH_CHECK", False)
+    except Exception:
+        return False
+
+
+def _concurrent_health_probe(endpoints: list[Endpoint]) -> None:
+    """Probe all endpoints concurrently to check availability.
+    
+    Pattern from OpenJarvis: parallel health-probing with ThreadPoolExecutor
+    collapses dead-port timeout cost from serial (N * timeout) to parallel
+    (1 * timeout).
+    
+    Marks unavailable endpoints with a flag so LLMClient can skip them.
+    """
+    if not endpoints:
+        return
+    
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import contextlib
+    
+    def _probe_one(ep: Endpoint) -> tuple[str, bool]:
+        """Probe a single endpoint. Returns (name, is_healthy)."""
+        if not ep.base_url:
+            return (ep.name, False)
+        
+        try:
+            import httpx
+            # Quick health probe: GET /v1/models or just connect test
+            timeout = httpx.Timeout(connect=2.0, read=3.0, write=2.0, pool=1.0)
+            with httpx.Client(timeout=timeout, http2=True) as client:
+                # Try models endpoint (most OpenAI-compatible servers support this)
+                models_url = f"{ep.base_url}/v1/models"
+                headers = {}
+                if ep.api_key:
+                    headers["Authorization"] = f"Bearer {ep.api_key}"
+                
+                resp = client.get(models_url, headers=headers)
+                is_healthy = resp.status_code in (200, 401, 403)  # 401/403 = auth issue but server is alive
+                return (ep.name, is_healthy)
+        except Exception:
+            return (ep.name, False)
+    
+    # Probe all endpoints in parallel
+    results: dict[str, bool] = {}
+    with ThreadPoolExecutor(max_workers=min(len(endpoints), 8)) as pool:
+        futures = {pool.submit(_probe_one, ep): ep for ep in endpoints}
+        for future in as_completed(futures):
+            with contextlib.suppress(Exception):
+                name, healthy = future.result()
+                results[name] = healthy
+    
+    # Log results
+    healthy_count = sum(1 for h in results.values() if h)
+    logger.info(
+        "Endpoint health probe: %d/%d healthy (%s)",
+        healthy_count, len(endpoints),
+        ", ".join(f"{n}:{'✓' if h else '✗'}" for n, h in results.items())
+    )
+    
+    # Store health status on endpoint objects for LLMClient fallback logic
+    for ep in endpoints:
+        ep._health_checked = True  # type: ignore[attr-defined]
+        ep._is_healthy = results.get(ep.name, False)  # type: ignore[attr-defined]
 
 
 def get(name: str) -> Endpoint | None:

@@ -313,9 +313,30 @@ def main():
             ui.update_splash(60, "Initializing system controller...")
             controller = RaphaelController(ui)
 
+            # ── Start Cron Scheduler ──
+            if config.CRON_ENABLED:
+                try:
+                    from cron.scheduler import start_ticker_thread
+                    start_ticker_thread(
+                        interval=config.CRON_TICK_INTERVAL,
+                        verbose=config.CRON_VERBOSE_LOGGING,
+                    )
+                    logger.info("Cron scheduler started (interval: %ds)", config.CRON_TICK_INTERVAL)
+                except Exception as e:
+                    logger.error("Failed to start cron scheduler: %s", e)
+
             def _cleanup():
                 if controller and controller.vad_detector:
                     controller.vad_detector.stop()
+                
+                # ── Stop Cron Scheduler ──
+                if config.CRON_ENABLED:
+                    try:
+                        from cron.scheduler import stop_ticker_thread
+                        stop_ticker_thread(timeout=3.0)
+                        logger.info("Cron scheduler stopped")
+                    except Exception as e:
+                        logger.debug("Error stopping cron scheduler: %s", e)
 
             atexit.register(_cleanup)
             logger.info("[Startup] Deferred initialization complete.")

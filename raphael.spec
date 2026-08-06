@@ -88,7 +88,6 @@ hiddenimports = [
     # ── Controller, agents, modules ──
     "controller.raphael_controller",
     "controller.state",
-    "audio.mic_monitor",
     "modules.tts",
     "modules.tts_engines",
     "modules.tts_registry",

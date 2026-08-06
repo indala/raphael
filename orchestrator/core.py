@@ -24,6 +24,9 @@ import contextlib
 import config
 from controller.state import state
 from orchestrator.background import BackgroundTask, init_runner
+from orchestrator.background_reviewer import spawn_background_review
+from orchestrator.context_scrubber import scrub_stream, scrub_text
+from orchestrator.message_sanitizer import sanitize_history
 from orchestrator.event_adapter import stream_with_events
 from orchestrator.event_bus import (
     TASK_COMPLETED,
@@ -55,6 +58,7 @@ from orchestrator.log_utils import (
 from orchestrator.plugin import get_hooks
 from orchestrator.policy import evaluate_tool_call, permission_message
 from orchestrator.tools import get_tool_map, get_tool_schemas
+from orchestrator.loop_guard import LoopGuard
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,28 @@ class _LLMResponse:
     def __init__(self, content: str):
         self.content = content
         self.tool_calls = None
+
+
+def _is_llm_error(content: str | None) -> bool:
+    """Return True if a response content string signals a classified LLM error.
+
+    Matches both the legacy ``[Error calling LLM...]`` format and the new
+    classified error format produced by error_classifier (starts with an icon
+    followed by a provider message, or the legacy bracket format).
+    """
+    if not content:
+        return False
+    return (
+        content.startswith("[Error calling LLM")
+        or content.startswith("💳 ")
+        or content.startswith("⏱ ")
+        or content.startswith("🔑 ")
+        or content.startswith("📄 ")
+        or content.startswith("🔍 ")
+        or content.startswith("⚠️ ")
+        or content.startswith("🌐 ")
+        or content.startswith("❌ ")
+    )
 
 
 class LLMClient:
@@ -295,6 +321,15 @@ class LLMClient:
         backend_label = f"{self.backend}/{kwargs['model']}"
         log_event("LLM Call", f"reason={reason} {backend_label}")
 
+        # Inject Anthropic prompt-cache breakpoints when enabled
+        from orchestrator.prompt_caching import build_prompt_cache_plan, strip_cache_control
+        _ep_base_url = getattr(self._ep, "base_url", "")
+        _cached_messages = build_prompt_cache_plan(
+            kwargs["messages"], base_url=_ep_base_url, model=str(kwargs["model"])
+        )
+        if _cached_messages is not kwargs["messages"]:
+            kwargs["messages"] = _cached_messages
+
         last_error = ""
         # Try primary backend with retries
         for attempt in range(3):
@@ -303,12 +338,18 @@ class LLMClient:
                     logger.debug("Calling %s (reason=%s, attempt %d)...", backend_label, reason, attempt + 1)
                 response = self.client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
                 msg = response.choices[0].message
+                # Track token usage
+                from orchestrator.token_tracker import get_tracker
+                get_tracker().record(response, backend=self.backend, model=str(kwargs["model"]), reason=reason)
                 # Handle reasoning models that return empty content
                 if not msg.content and hasattr(msg, "reasoning_content") and msg.reasoning_content and (not hasattr(msg, "tool_calls") or not msg.tool_calls):
                     msg.content = msg.reasoning_content
                 # If still empty, provide a fallback
                 if not msg.content and (not hasattr(msg, "tool_calls") or not msg.tool_calls):
                     msg.content = "I understand. Let me process that."
+                # Scrub memory context tags from content
+                if msg.content:
+                    msg.content = scrub_text(msg.content)
                 return msg  # type: ignore[return-value]
             except Exception as e:
                 last_error = str(e)
@@ -349,6 +390,8 @@ class LLMClient:
                         if not msg.content and (not hasattr(msg, "tool_calls") or not msg.tool_calls):
                             msg.content = "I understand. Let me process that."
                         logger.info("Fallback model '%s' succeeded (reason=%s)", fallback_m, reason)
+                        from orchestrator.token_tracker import get_tracker
+                        get_tracker().record(response, backend=self.backend, model=str(kwargs["model"]), reason=reason)
                         return msg  # type: ignore[return-value]
                     except Exception as e:
                         last_error = str(e)
@@ -391,6 +434,8 @@ class LLMClient:
                         if not msg.content and (not hasattr(msg, "tool_calls") or not msg.tool_calls):
                             msg.content = "I understand. Let me process that."
                         logger.info("Fallback backend '%s' succeeded after primary failure (reason=%s)", fb, reason)
+                        from orchestrator.token_tracker import get_tracker
+                        get_tracker().record(response, backend=fb, model=str(kwargs["model"]), reason=reason)
                         return msg  # type: ignore[return-value]
                     except Exception as e:
                         last_error = str(e)
@@ -403,9 +448,21 @@ class LLMClient:
             # Restore original backend for next request
             self._switch_backend(self._original_backend)
 
-        error_msg = f"[Error calling LLM ({backend_label}): {last_error}]"
+        # Classify the error and produce a user-facing recovery message
+        from orchestrator.error_classifier import classify_api_error, format_error_for_user
+        classified = classify_api_error(
+            last_error,
+            backend=self.backend,
+            base_url=getattr(self._ep, "base_url", ""),
+            model=self.model,
+        )
+        logger.warning(
+            "LLM call failed (%s/%s) reason=%s: %s",
+            self.backend, self.model, classified.reason.value, last_error[:200],
+        )
+        error_msg = format_error_for_user(classified)
         if config.DEBUG:
-            logger.debug(error_msg)
+            logger.debug("Classified error: %s", error_msg)
         return _LLMResponse(content=error_msg)  # type: ignore[return-value]
 
     def _accumulate_streaming_tool_calls(self, acc: dict, delta_tool_calls) -> dict:
@@ -449,6 +506,15 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
+        # Inject Anthropic prompt-cache breakpoints when enabled
+        from orchestrator.prompt_caching import build_prompt_cache_plan
+        _ep_base_url = getattr(self._ep, "base_url", "")
+        _cached_messages = build_prompt_cache_plan(
+            kwargs["messages"], base_url=_ep_base_url, model=str(kwargs["model"])
+        )
+        if _cached_messages is not kwargs["messages"]:
+            kwargs["messages"] = _cached_messages
+
         last_error = ""
         for attempt in range(3):
             try:
@@ -459,16 +525,24 @@ class LLMClient:
                 full_content = ""
                 tool_calls_acc: dict[int, dict] = {}
 
-                for chunk in response:
-                    if len(chunk.choices) == 0:  # type: ignore[attr-defined]
-                        continue
-                    delta = chunk.choices[0].delta  # type: ignore[attr-defined]
-                    if delta and delta.content:
-                        full_content += delta.content
-                        if on_token is not None:
-                            on_token(delta.content)  # type: ignore[misc]
-                    if delta and delta.tool_calls:
-                        self._accumulate_streaming_tool_calls(tool_calls_acc, delta.tool_calls)
+                # Wrap streaming in context scrubber to prevent tag leakage
+                from orchestrator.context_scrubber import StreamingContextScrubber
+                scrubber = StreamingContextScrubber()
+                
+                def _token_generator():
+                    for chunk in response:
+                        if len(chunk.choices) == 0:  # type: ignore[attr-defined]
+                            continue
+                        delta = chunk.choices[0].delta  # type: ignore[attr-defined]
+                        if delta and delta.content:
+                            yield delta.content
+                        if delta and delta.tool_calls:
+                            self._accumulate_streaming_tool_calls(tool_calls_acc, delta.tool_calls)
+                
+                for clean_token in scrubber.scrub_stream(_token_generator()):
+                    full_content += clean_token
+                    if on_token is not None:
+                        on_token(clean_token)  # type: ignore[misc]
 
                 # Reconstruct response object from accumulated data
                 msg = _LLMResponse(content=full_content)
@@ -544,7 +618,7 @@ class LLMClient:
             response = self.chat(msgs, schemas, reason=reason)
             if not response or not hasattr(response, "content"):
                 return "I encountered an issue processing your request."
-            if response.content and response.content.startswith("[Error calling LLM"):
+            if response.content and _is_llm_error(response.content):
                 return response.content  # type: ignore[no-any-return]
 
             if hasattr(response, "tool_calls") and response.tool_calls:
@@ -906,6 +980,16 @@ class RaphaelOrchestrator:
         except Exception:
             pass
 
+        # Hardware-aware first-run recommendation (task #7)
+        # If no endpoints are configured, detect hardware and log a recommendation
+        # so the user knows which engine/model to add to settings.toml.
+        try:
+            from orchestrator.endpoint_registry import all as _all_eps
+            if not _all_eps():
+                self._log_hardware_recommendation()
+        except Exception:
+            pass
+
         # Durable-execution recovery: restore task checkpoints and repair tasks
         # interrupted by the previous shutdown (LangGraph-style checkpointing).
         try:
@@ -937,6 +1021,10 @@ class RaphaelOrchestrator:
             max_workers=getattr(config, "BACKGROUND_MAX_WORKERS", 4),
         )
         self.bg_runner.set_executor(self.executor)
+
+        # Context engine — pluggable context selection/compression (task #5)
+        from orchestrator.context_engine import DefaultContextEngine
+        self._context_engine = DefaultContextEngine()
 
         # Start metrics collector (subscribes to event bus — singleton, safe to call once)
         from orchestrator.agent_metrics import MetricsCollector
@@ -1011,6 +1099,52 @@ class RaphaelOrchestrator:
     def set_activity_callback(self, fn: Callable) -> None:
         """Attach activity callback to notify controller that progress is being made."""
         self._activity_callback = fn
+
+    def get_hardware_recommendation(self) -> dict:
+        """Detect hardware and return engine/model recommendation.
+
+        Returns dict with engine, model, base_url, tier, summary, message.
+        Useful for the Settings UI first-run wizard.
+        """
+        from orchestrator.hardware_detector import recommend_first_run
+        return recommend_first_run()
+
+    def _log_hardware_recommendation(self) -> None:
+        """Log hardware recommendation at startup when no endpoints are configured."""
+        try:
+            from orchestrator.hardware_detector import recommend_first_run
+            rec = recommend_first_run()
+            logger.warning(
+                "No endpoints configured. Hardware recommendation:\n%s",
+                rec["message"],
+            )
+        except Exception as e:
+            logger.debug("Hardware detection failed: %s", e)
+
+    def set_context_engine(self, engine) -> None:
+        """Replace the context engine with a custom implementation.
+
+        The engine must implement ContextEngine ABC:
+          - select_context(query, history, max_history) → list[dict]
+          - on_turn_complete(query, response, history) → None
+          - compress(history, llm, max_history) → list[dict]
+
+        Example — plug in a vector-search engine::
+
+            from orchestrator.context_engine import ContextEngine
+            class MyVectorEngine(ContextEngine):
+                def select_context(self, query, history, max_history):
+                    # retrieve relevant chunks via FAISS
+                    ...
+            orchestrator.set_context_engine(MyVectorEngine())
+        """
+        from orchestrator.context_engine import ContextEngine
+        if not isinstance(engine, ContextEngine):
+            raise TypeError(
+                f"engine must implement ContextEngine ABC, got {type(engine).__name__}"
+            )
+        self._context_engine = engine
+        logger.info("Context engine set to %s", type(engine).__name__)
 
     def _get_system_prompt(self, user_query: str = "", task_context: str = "") -> dict:
         """Dynamically generate the system prompt using SystemPromptBuilder."""
@@ -1402,19 +1536,29 @@ class RaphaelOrchestrator:
 
         self.history.append({"role": "user", "content": user_input})
 
+        # ── Transcript Durability: Write user message BEFORE LLM call ──
+        # If the process crashes during LLM execution, the user message is
+        # preserved in history and can be resumed. Pattern from openclaude.
+        self._persist_history()
+
         # Compact history (intelligent summarization instead of truncation)
         self._compact_history()
 
         log_event("System Prompt Build")
-        messages = [self._get_system_prompt(user_input), *self.history]
+        messages = [self._get_system_prompt(user_input), *self._context_engine.select_context(
+            user_input, self.history, config.MAX_HISTORY
+        )]
+
+        # Pre-flight sanitization: close interrupted tool sequences, strip
+        # orphaned tool results, repair null assistant turns.
+        messages = sanitize_history(messages)
 
         # Reset interrupt flag for this new request
         self.clear_interrupt()
-
-        # Main loop — handle multiple tool calls
         max_tool_rounds = 25
         completed_rounds = 0
         _task_id = self._init_task(user_input)
+        loop_guard = LoopGuard() if config.LOOP_GUARD_ENABLED else None
         for round_idx in range(max_tool_rounds):
             completed_rounds += 1
             if self._activity_callback:
@@ -1452,7 +1596,7 @@ class RaphaelOrchestrator:
                 return error_msg
 
             # Check if LLM returned an error
-            if response.content and response.content.startswith("[Error calling LLM"):
+            if response.content and _is_llm_error(response.content):
                 self.history.append({
                     "role": "assistant",
                     "content": response.content,
@@ -1580,6 +1724,17 @@ class RaphaelOrchestrator:
                     if _loop_warning:
                         messages.append({"role": "user", "content": _loop_warning})
 
+                    # ── LoopGuard — degenerate tool-call loops (successful too) ──
+                    if loop_guard is not None:
+                        _guard_warning = loop_guard.check(
+                            tool_call.function.name,
+                            json.loads(tool_call.function.arguments)
+                                if tool_call.function.arguments else {},
+                            result,
+                        )
+                        if _guard_warning:
+                            messages.append({"role": "user", "content": _guard_warning})
+
                 # ── Update task progress for next LLM round ──
                 for tc in response.tool_calls:
                     try:
@@ -1609,6 +1764,8 @@ class RaphaelOrchestrator:
                 log_event("Text Response", f"{len(response.content)} chars")
                 self._finalize_task(_task_id, result=response.content)
                 self._trigger_background_memory_update(user_input, response.content)
+                spawn_background_review(user_input, response.content, lambda msg: logger.info("background_reviewer: %s", msg))
+                self._context_engine.on_turn_complete(user_input, response.content, self.history)
                 finalize_timeline()
                 clear_request_id()
                 return response.content  # type: ignore[no-any-return]
@@ -1741,9 +1898,14 @@ class RaphaelOrchestrator:
         log_event("System Prompt Build")
         messages = [self._get_system_prompt(user_input), *self.history]
 
+        # Pre-flight sanitization: close interrupted tool sequences, strip
+        # orphaned tool results, repair null assistant turns.
+        messages = sanitize_history(messages)
+
         max_tool_rounds = 25
         completed_rounds = 0
         _task_id = self._init_task(user_input)
+        loop_guard = LoopGuard() if config.LOOP_GUARD_ENABLED else None
         for round_idx in range(max_tool_rounds):
             completed_rounds += 1
             if self._activity_callback:
@@ -1787,7 +1949,7 @@ class RaphaelOrchestrator:
                 yield TaskErrorEvent(task_id=_task_id, error=error_msg)
                 return
 
-            if response.content and response.content.startswith("[Error calling LLM"):
+            if response.content and _is_llm_error(response.content):
                 self.history.append({"role": "assistant", "content": response.content})
                 log_event("LLM Error", response.content[:80])
                 finalize_timeline()
@@ -1910,6 +2072,17 @@ class RaphaelOrchestrator:
                         "content": result,
                     })
 
+                    # ── LoopGuard — degenerate tool-call loops (successful too) ──
+                    if loop_guard is not None:
+                        _guard_warning = loop_guard.check(
+                            tool_call.function.name,
+                            json.loads(tool_call.function.arguments)
+                                if tool_call.function.arguments else {},
+                            result,
+                        )
+                        if _guard_warning:
+                            messages.append({"role": "user", "content": _guard_warning})
+
                     if result.startswith("Error:"):
                         yield ToolErrorEvent(
                             tool=tool_call.function.name, error=result, round=round_idx,
@@ -1950,6 +2123,8 @@ class RaphaelOrchestrator:
                 log_event("Text Response", f"{len(response.content)} chars")
                 self._finalize_task(_task_id, result=response.content)
                 self._trigger_background_memory_update(user_input, response.content)
+                spawn_background_review(user_input, response.content, lambda msg: logger.info("background_reviewer: %s", msg))
+                self._context_engine.on_turn_complete(user_input, response.content, self.history)
                 finalize_timeline()
                 clear_request_id()
                 yield TaskCompleteEvent(task_id=_task_id, result=response.content)
@@ -1968,61 +2143,71 @@ class RaphaelOrchestrator:
         clear_request_id()
         yield TaskErrorEvent(task_id=_task_id, error=error_msg)
 
-    def _compact_history(self) -> None:
-        """Compress old history turns rather than blindly truncating.
-
-        When the conversation history exceeds ``MAX_HISTORY``, the oldest
-        turns are summarized into a compact ``[Compressed history]`` message.
-        This preserves high-level context (goals, decisions, files changed)
-        while drastically reducing token count — analogous to OpenClaude's
-        snip-boundary compaction.
+    def _persist_history(self) -> None:
+        """Write conversation history to disk for crash recovery.
+        
+        Saves the full history to a JSON file so that if Raphael crashes
+        mid-turn, the conversation can be resumed without losing the user's
+        last message. Pattern from openclaude's transcript durability.
         """
-        if len(self.history) <= config.MAX_HISTORY:
-            return
-
-        # Compact the oldest half of the overage
-        target = config.MAX_HISTORY // 2
-        to_compact = self.history[:target]
-        rest = self.history[target:]
-
-        # Build a compact summary prompt from the oldest turns
-        compact_text = ""
-        for msg in to_compact:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            tc = msg.get("tool_calls", [])
-            line = f"[{role}] {content[:300]}"
-            compact_text += line + "\n"
-            if tc:
-                for t in tc:
-                    fn = t.get("function", {}).get("name", "?")
-                    compact_text += f"  -> tool_call: {fn}\n"
-            compact_text += "\n"
-
         try:
-            summary = self.llm.chat([
-                {"role": "system", "content": (
-                    "You are a conversation summarizer. Summarize the following "
-                    "conversation history concisely. Focus on: user goals, decisions "
-                    "made, files modified, tools used, key facts established. "
-                    "Keep the summary under 200 words."
-                )},
-                {"role": "user", "content": f"Summarize this conversation:\n\n{compact_text}"},
-            ], tools=None, reason="history_compaction")
-            summary_text = summary.content if summary else ""
-            if not summary_text:
-                raise ValueError("empty summary")
-        except Exception:
-            # Fallback: just truncate as before
-            self.history = rest  # type: ignore[attr-defined]
+            history_file = config.ROAMING_DIR / "sessions" / "current_history.json"
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            import json
+            history_file.write_text(
+                json.dumps(self.history, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.debug("Failed to persist history: %s", e)
+
+    def load_history(self) -> bool:
+        """Load persisted history from disk (for crash recovery).
+        
+        Returns True if history was loaded, False otherwise.
+        """
+        try:
+            history_file = config.ROAMING_DIR / "sessions" / "current_history.json"
+            if not history_file.exists():
+                return False
+            
+            import json
+            data = json.loads(history_file.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                self.history = data
+                logger.info("Loaded %d history entries from persistent session", len(self.history))
+                return True
+        except Exception as e:
+            logger.debug("Failed to load history: %s", e)
+        return False
+
+    def _compact_history(self) -> None:
+        """Compress old history turns via the active ContextEngine.
+
+        Delegates to self._context_engine.compress() which uses two-phase
+        approach: cheap tool-result pruning first, then LLM summarization
+        with head/tail protection if still over threshold.
+        """
+        from orchestrator.context_engine import DefaultContextEngine
+        if not isinstance(self._context_engine, DefaultContextEngine):
+            # Custom engine — always delegate
+            self.history = self._context_engine.compress(
+                self.history, self.llm, config.MAX_HISTORY
+            )
             return
 
-        # Replace compacted turns with a single compressed message
-        compressed = {
-            "role": "system",
-            "content": f"[Compressed history]: {summary_text[:500]}",
-        }
-        self.history = [compressed, *rest]
+        # DefaultContextEngine: fast-path skip if well under threshold
+        from orchestrator.context_compressor import ContextCompressor
+        _check = ContextCompressor(threshold_percent=0.8, min_history_for_compression=12)
+        if not _check.should_compress(self.history, config.MAX_HISTORY):
+            # Cheap prune only (no LLM call needed)
+            self.history = _check.prune_tool_results_only(self.history)
+            return
+
+        self.history = self._context_engine.compress(
+            self.history, self.llm, config.MAX_HISTORY
+        )
 
     def _trigger_background_memory_update(self, user_text: str, assistant_text: str):
         """Spawns a background thread to organize and persist memory updates."""
@@ -2131,7 +2316,13 @@ class RaphaelOrchestrator:
             thread.join()
 
     def reset_conversation(self):
-        """Clear conversation history."""
+        """Clear conversation history and log session cost summary."""
+        from orchestrator.token_tracker import get_tracker
+        tracker = get_tracker()
+        summary = tracker.format_summary()
+        if "No LLM calls" not in summary:
+            logger.info("Session ended. %s", summary)
+        tracker.reset_session()
         self.history = []
         logger.info("Conversation reset.")
 

@@ -6,6 +6,7 @@ background memory updates after responses, and idle-time consolidation.
 
 import json
 import logging
+import re
 import time as _time
 from datetime import datetime
 
@@ -17,7 +18,73 @@ logger = logging.getLogger(__name__)
 
 # ── Context cache ───────────────────────────────────────────────────
 _context_cache: dict[str, tuple[str, float]] = {}
-_CONTEXT_CACHE_TTL = 300.0  # seconds (5 min, was 30s)
+_CONTEXT_CACHE_TTL = 300.0  # seconds (5 min)
+
+# ── Credential redaction ────────────────────────────────────────────
+# Pattern from hermes-agent/agent/context_engine.py sanitize_memory_context().
+# Applied to ALL memory before it enters the system prompt — prevents
+# API keys, passwords, tokens stored in memory from leaking to LLM backends.
+_REDACT_PATTERN = re.compile(
+    r"""
+    (?:
+        # Key=value formats: api_key=sk-..., password: hunter2, token="abc"
+        (?:api[_\-]?key|secret[_\-]?key|access[_\-]?token|auth[_\-]?token
+          |bearer[_\-]?token|private[_\-]?key|client[_\-]?secret
+          |password|passwd|credentials?|api[_\-]?secret)
+        \s*[=:]\s*
+        (?P<val1>[^\s,;\"\']{6,})
+    )
+    |
+    (?:
+        # Standalone secrets: sk-..., ghp_..., xoxb-..., AIza..., AKIA...
+        \b(?:sk|pk|rk|dk)-[A-Za-z0-9\-_]{16,}
+        |\bghp_[A-Za-z0-9]{36,}
+        |\bxoxb-[A-Za-z0-9\-]{40,}
+        |\bAIza[A-Za-z0-9\-_]{35,}
+        |\bAKIA[A-Z0-9]{16}
+        |\beyJ[A-Za-z0-9_\-]{20,}\.eyJ[A-Za-z0-9_\-]{20,}  # JWT
+    )
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Cap on memory context injected into the system prompt
+_MEMORY_CONTEXT_MAX_CHARS = 6_000
+_MEMORY_CONTEXT_HEAD_CHARS = 4_000
+_MEMORY_CONTEXT_TAIL_CHARS = 1_500
+_MEMORY_CONTEXT_TRUNCATION_MARKER = "\n...[memory context truncated for length]...\n"
+
+
+def sanitize_memory_context(text: str) -> str:
+    """Scrub credentials from memory context before system prompt injection.
+
+    Replaces detected secrets with ``[REDACTED]``. Also truncates text that
+    exceeds _MEMORY_CONTEXT_MAX_CHARS to avoid bloating the context window.
+
+    Pattern from hermes-agent/agent/context_engine.py sanitize_memory_context().
+    """
+    if not text:
+        return text
+
+    # Step 1: redact credentials
+    def _replace(m: re.Match) -> str:
+        full = m.group(0)
+        val = m.group("val1")
+        if val:
+            return full.replace(val, "[REDACTED]")
+        return "[REDACTED]"
+
+    sanitized = _REDACT_PATTERN.sub(_replace, text)
+
+    # Step 2: truncate if over max
+    if len(sanitized) <= _MEMORY_CONTEXT_MAX_CHARS:
+        return sanitized
+
+    return (
+        sanitized[:_MEMORY_CONTEXT_HEAD_CHARS]
+        + _MEMORY_CONTEXT_TRUNCATION_MARKER
+        + sanitized[-_MEMORY_CONTEXT_TAIL_CHARS:]
+    )
 
 
 def _invalidate_context_cache() -> None:
@@ -38,10 +105,13 @@ def _keyword_match(query: str, text: str) -> bool:
 
 def get_relevant_context(user_query: str) -> str:
     """
-    Read Phase: Fast keyword-based memory retrieval.
-    No LLM calls — pure text matching against the memory database.
+    Read Phase: Memory retrieval using SQLite FTS5 search when available,
+    falling back to keyword matching against the JSON store.
+    
+    SQLite path: uses FTS5 BM25 ranking for relevance.
+    JSON path: keyword overlap matching (original behaviour).
     """
-    # Fast path: cache hit for a similar query within TTL
+    # Fast path: cache hit within TTL
     cache_key = user_query.strip().lower()[:80]
     now = _time.monotonic()
     if cache_key in _context_cache:
@@ -49,6 +119,72 @@ def get_relevant_context(user_query: str) -> str:
         if (now - cached_time) < _CONTEXT_CACHE_TTL:
             return cached_result
 
+    # ── SQLite FTS5 path ─────────────────────────────────────────
+    try:
+        from memory.memory_manager import search_memory, load_memory
+        
+        memory = load_memory()
+        user_mem = memory.get("user_memory", {})
+        
+        # 1. Always include core profile fields
+        core_lines = []
+        core_fields = ["name", "job", "motto", "city"]
+        for field in core_fields:
+            entry = user_mem.get(field)
+            if entry:
+                val = entry.get("value") if isinstance(entry, dict) else entry
+                if val:
+                    core_lines.append(f"{field.title()}: {val}")
+        
+        # 2. FTS5 search for relevant entries
+        search_results = search_memory(user_query, limit=15)
+        match_lines = []
+        seen_keys: set[str] = set(core_fields)
+        for result in search_results:
+            key = result["key"]
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            cat = result["category"]
+            val = result["value"]
+            if not val or val == "[redacted]":
+                continue
+            prefix = "" if cat == "user_memory" else f"[{cat}] "
+            match_lines.append(f"{prefix}{key}: {val}")
+        
+        # 3. Combine
+        lines = []
+        if core_lines:
+            lines.append("Core User Profile:")
+            for line in core_lines:
+                lines.append(f"  - {line}")
+        if match_lines:
+            if lines:
+                lines.append("")
+            lines.append("Relevant Context / Saved Details:")
+            for line in match_lines:
+                lines.append(f"  - {line}")
+        
+        if not lines:
+            _context_cache[cache_key] = ("", now)
+            return ""
+        
+        header = "[WHAT YOU KNOW ABOUT THE USER -- use naturally, never recite like a list]\n"
+        result_text = header + "\n".join(lines) + "\n"
+        result_text = sanitize_memory_context(result_text)
+        _context_cache[cache_key] = (result_text, now)
+        return result_text
+        
+    except Exception as e:
+        logger.debug("FTS context retrieval failed: %s — falling back to keyword", e)
+
+    # ── Keyword fallback ─────────────────────────────────────────
+    return _get_relevant_context_keyword(user_query, cache_key, now)
+
+
+def _get_relevant_context_keyword(user_query: str, cache_key: str, now: float) -> str:
+    """Original keyword-based context retrieval (fallback)."""
+    from memory.memory_manager import load_memory
     memory = load_memory()
     if not memory:
         _context_cache[cache_key] = ("", now)
@@ -105,6 +241,7 @@ def get_relevant_context(user_query: str) -> str:
 
     header = "[WHAT YOU KNOW ABOUT THE USER -- use naturally, never recite like a list]\n"
     result = header + "\n".join(lines) + "\n"
+    result = sanitize_memory_context(result)
     _context_cache[cache_key] = (result, now)
     return result
 
@@ -150,7 +287,7 @@ def run_memory_agent(user_text: str, assistant_text: str) -> None:
         resp = client.chat(messages, None, reason="memory_organizer")
         if resp and resp.content:  # type: ignore[union-attr]
             text = resp.content.strip()  # type: ignore[union-attr]
-            if text.startswith("[Error calling LLM"):
+            if text.startswith("[Error calling LLM") or text.startswith("💳 ") or text.startswith("❌ "):
                 logger.error("Memory Organizer background thread failed: %s", text)
                 return
             if text.startswith("```json"):
@@ -233,7 +370,7 @@ def consolidate_memory(history: list[dict]) -> None:
         resp = client.chat(messages, None, reason="memory_organizer")
         if resp and resp.content:  # type: ignore[union-attr]
             text = resp.content.strip()  # type: ignore[union-attr]
-            if text.startswith("[Error calling LLM"):
+            if text.startswith("[Error calling LLM") or text.startswith("💳 ") or text.startswith("❌ "):
                 logger.error("Memory consolidation failed: %s", text)
                 return
             if text.startswith("```json"):

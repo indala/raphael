@@ -123,6 +123,17 @@ def get_schemas() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "get_session_cost",
+                "description": "Show current session LLM token usage and estimated cost breakdown. Shows total tokens used, input vs output tokens, and estimated dollar cost for all API calls made this session.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "get_agent_performance",
                 "description": "Get agent performance metrics (call count, success rate, latency). Shows stats for all agents or a specific one.",
                 "parameters": {
@@ -352,6 +363,12 @@ def get_agent_performance(agent_name: str = "") -> str:
     if not stats:
         return "No agent performance data recorded yet."
     return MetricsCollector().format_report()
+
+
+def get_session_cost() -> str:
+    """Return current session token usage and estimated cost."""
+    from orchestrator.token_tracker import get_session_cost as _cost
+    return _cost()
 
 
 def show_capability_graph() -> str:
