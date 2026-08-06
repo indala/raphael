@@ -79,10 +79,13 @@ STT_ACTIVE_LISTENING_TIMEOUT = 300
 # streaming continuously to an ASR engine. Requires a batch-capable STT
 # backend (winrt is streaming-only and excluded). Degrades gracefully.
 STT_USE_VAD_GATE = os.getenv("STT_USE_VAD_GATE", "true").lower() in ("1", "true", "yes")
-# Batch ASR backends used for on-demand utterances (winrt cannot batch)
-STT_BATCH_PREFERRED_BACKENDS = os.getenv(
-    "STT_BATCH_PREFERRED_BACKENDS", "whisper_local,groq"
-).split(",")
+# Batch ASR backends used for on-demand utterances (winrt cannot batch).
+# When unset, the VAD gate falls back to STT_PREFERRED_BACKENDS so a single
+# stt_preferred_backends setting is honored app-wide.
+_BATCH_PREFS_ENV = os.getenv("STT_BATCH_PREFERRED_BACKENDS", "").strip()
+STT_BATCH_PREFERRED_BACKENDS = (
+    [p.strip() for p in _BATCH_PREFS_ENV.split(",") if p.strip()] if _BATCH_PREFS_ENV else []
+)
 # VAD engine: "auto" (silero if model present, else energy), "silero", "energy"
 VAD_ENGINE = os.getenv("VAD_ENGINE", "auto")
 # silero-vad ONNX model (download silero_vad.onnx here to enable it)

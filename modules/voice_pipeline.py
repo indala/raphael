@@ -198,7 +198,9 @@ class GatedDetector:
         if batch_backends is None:
             prefs = getattr(config, "STT_BATCH_PREFERRED_BACKENDS", None) or []
             if not prefs:
-                prefs = ["whisper_local", "groq"]
+                # No batch-specific config → honor the general STT preference
+                # order (winrt is dropped below as streaming-only).
+                prefs = getattr(config, "STT_PREFERRED_BACKENDS", None) or []
             self._batch_backends = self._resolve_batch_backends(prefs)
         else:
             self._batch_backends = list(batch_backends)

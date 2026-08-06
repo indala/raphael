@@ -127,6 +127,10 @@ class LLMClient:
         self.model = model or self._ep.text_model
         self.vision_model = self._ep.vision_model or self.model
 
+        # Dedicated vision client (lazily built, bound to vision_priority)
+        self._vision_client = None
+        self._vision_client_lock = threading.Lock()
+
         self._fallback_models = []
         if self._ep.fallback_models:
             self._fallback_models = list(self._ep.fallback_models)
@@ -617,10 +621,54 @@ class LLMClient:
                 return response.content or ""
         return "(reached max rounds without final response)"
 
+    def _get_vision_client(self) -> "LLMClient":
+        """Return the client that serves image-analysis requests.
+
+        Resolves the first endpoint in ``vision_priority`` that exposes a
+        ``vision_model`` and returns a dedicated client bound to it, so image
+        analysis always uses the configured vision endpoint — regardless of
+        which text backend is currently active. Falls back to ``self`` when no
+        vision endpoint is configured or the current backend is already the
+        picked one.
+        """
+        if self._vision_client is not None:
+            return self._vision_client
+
+        from orchestrator.endpoint_registry import (
+            get as _get_ep,
+            get_vision_priority,
+        )
+
+        pick: str | None = None
+        for name in get_vision_priority():
+            ep = _get_ep(name)
+            if ep and ep.vision_model:
+                pick = name
+                break
+
+        with self._vision_client_lock:
+            # Re-check after acquiring the lock (double-checked locking)
+            if self._vision_client is not None:
+                return self._vision_client
+            if pick is None or pick == self.backend:
+                # No vision endpoint, or the active backend already is the pick
+                self._vision_client = self
+            else:
+                logger.info(
+                    "Image analysis routed to vision endpoint '%s' (from vision_priority)",
+                    pick,
+                )
+                self._vision_client = LLMClient(endpoint=pick)
+            return self._vision_client
+
     def chat_with_vision(
         self, messages: list[dict], image_path: str, tools: list[dict] | None = None, reason: str = "vision"
     ) -> Any:
-        """Send a chat with an image attachment (vision)."""
+        """Send a chat with an image attachment (vision).
+
+        Always routed through the vision-priority endpoint (see
+        ``_get_vision_client``), not the active text backend.
+        """
         import base64
         from pathlib import Path
 
@@ -653,7 +701,9 @@ class LLMClient:
         }
 
         vision_messages = [*messages[:-1], image_message, messages[-1]]
-        return self.chat(vision_messages, tools, use_vision_model=True, reason=reason)
+        return self._get_vision_client().chat(
+            vision_messages, tools, use_vision_model=True, reason=reason
+        )
 
 
 class ToolExecutor:

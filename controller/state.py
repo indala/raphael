@@ -27,7 +27,6 @@ class RuntimeState:
         self._speaker_muted = False
         self._speaker_volume = 100
         self._mic_volume = 100
-        self._mic_level = 0.0
 
     # ── Muted ──
 
@@ -160,18 +159,6 @@ class RuntimeState:
     def mic_volume(self, value: int):
         with self._lock:
             self._mic_volume = max(0, min(100, int(value)))
-
-    # ── Microphone live level (0.0–1.0, from sounddevice RMS) ──
-
-    @property
-    def mic_level(self) -> float:
-        with self._lock:
-            return self._mic_level  # type: ignore[no-any-return]
-
-    @mic_level.setter
-    def mic_level(self, value: float):
-        with self._lock:
-            self._mic_level = max(0.0, min(1.0, float(value)))
 
 
 # Singleton — import this in any module that needs runtime state

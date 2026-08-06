@@ -77,10 +77,6 @@ class RaphaelUI:
         """Update volume indicator labels from system audio state."""
         self._window.set_audio_state(mic_vol, spk_vol, spk_muted)
 
-    def set_mic_level(self, level: float):
-        """Update live mic level on the HUD (0.0–1.0)."""
-        self.hud.set_mic_level(level)
-
     def update_splash(self, progress: int, message: str):
         """Update progress bar and status message on the splash screen."""
         if hasattr(self, "_splash") and self._splash:

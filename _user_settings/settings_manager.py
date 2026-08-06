@@ -33,6 +33,7 @@ _SECTION_MAP: dict[str, str] = {
     "STT_ENABLED": "voice",
     "STT_BACKEND": "voice",
     "STT_PREFERRED_BACKENDS": "voice",
+    "STT_BATCH_PREFERRED_BACKENDS": "voice",
     "STT_WAKE_WORD_REQUIRED": "voice",
     "STT_WAKE_WORDS": "voice",
     "STT_ACTIVE_LISTENING_TIMEOUT": "voice",

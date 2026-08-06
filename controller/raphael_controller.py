@@ -14,7 +14,6 @@ from pathlib import Path
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 
 import config
-from audio.mic_monitor import MicLevelMonitor
 from controller.state import state
 from orchestrator.proactive import ProactiveEngine
 from orchestrator.startup import StartupManager
@@ -236,17 +235,6 @@ class RaphaelController(QObject):
                 self.ui.set_audio_state(mic_vol, spk_vol, spk_muted)
         except Exception:
             pass
-
-        # ── Start live mic level monitor ──
-        def _on_mic_level(level: float) -> None:
-            setattr(state, "mic_level", level)
-            self.ui.set_mic_level(level)
-
-        self._mic_monitor = MicLevelMonitor(callback=_on_mic_level)
-        if not self._mic_monitor.start():
-            logger.info("Mic level monitor not available (no mic or permission)")
-            state.audio_input_available = False
-            self.ui.set_audio_input_available(False)
 
         # Initialize button states
         self.ui.set_muted(state.muted)
@@ -979,8 +967,6 @@ class RaphaelController(QObject):
     def _shutdown(self):
         if self.vad_detector:
             self.vad_detector.stop()
-        if hasattr(self, "_mic_monitor"):
-            self._mic_monitor.stop()
         # Force garbage collection of lingering comtypes/pycaw COM wrappers
         # before the COM apartment is torn down. Without this, comtypes
         # __del__ → Release() calls fail with "COM method call without VTable"

@@ -48,7 +48,6 @@ class HudCanvas(QWidget):
     _muted_signal = pyqtSignal(bool)
     _mic_available_signal = pyqtSignal(bool)
     _transcription_signal = pyqtSignal(str)
-    _mic_level_signal = pyqtSignal(float)
 
     # Mouse interaction signal
     mouse_clicked = pyqtSignal(str)  # "left" or "right"
@@ -63,7 +62,6 @@ class HudCanvas(QWidget):
         self._muted = False
         self._mic_available = True
         self._transcription = ""      # last transcribed text
-        self._mic_level = 0.0         # 0.0–1.0 from MicLevelMonitor
 
         # ── Animation interpolators ──
         self._pulse = 0.0          # 0..1
@@ -85,7 +83,6 @@ class HudCanvas(QWidget):
         self._muted_signal.connect(self._set_muted)
         self._mic_available_signal.connect(self._set_mic_available)
         self._transcription_signal.connect(self._set_transcription)
-        self._mic_level_signal.connect(self._set_mic_level)
 
     # ── Public API (thread-safe — use signals) ──
 
@@ -108,11 +105,6 @@ class HudCanvas(QWidget):
         with contextlib.suppress(RuntimeError):
             self._transcription_signal.emit(text)
 
-    def set_mic_level(self, level: float):
-        """Update the live mic level display (0.0–1.0)."""
-        with contextlib.suppress(RuntimeError):
-            self._mic_level_signal.emit(level)
-
     # ── Internal setters (always on GUI thread) ──
 
     def _set_state(self, state: str):
@@ -126,9 +118,6 @@ class HudCanvas(QWidget):
 
     def _set_transcription(self, text: str):
         self._transcription = text
-
-    def _set_mic_level(self, level: float):
-        self._mic_level = max(0.0, min(1.0, level))
 
     def color(self) -> QColor:
         if not self._mic_available:
@@ -220,9 +209,6 @@ class HudCanvas(QWidget):
         # Outer ring (spinning)
         self._draw_outer_ring(p, cx, cy)
 
-        # Mic level arc (outside outer ring)
-        self._draw_mic_level(p, cx, cy)
-
         # Scanner arc
         self._draw_scanner(p, cx, cy)
 
@@ -284,64 +270,6 @@ class HudCanvas(QWidget):
         dim_color.setAlpha(60)
         p.setPen(QPen(dim_color, 1))
         p.drawArc(rect2, 0, 360 * 16)
-
-    def _draw_mic_level(self, p: QPainter, cx: float, cy: float):
-        """Draw a live mic level arc outside the outer ring.
-
-        The arc fills from the bottom (270°) clockwise as the mic
-        level increases.  Color shifts from green → yellow → orange
-        so the user can see both quiet and loud input at a glance.
-        """
-        level = self._mic_level
-        # Don't draw during IDLE / SLEEPING / MUTED unless there is
-        # actually signal (avoids a dim arc being distracting)
-        if level < 0.02:
-            return
-
-        r = 105 + 3 * math.sin(self._pulse * math.pi * 2)
-
-        # Map level 0→1 to arc span 0→270 degrees (leave 90° gap at
-        # the top so it looks like a proper meter)
-        span_deg = min(270, int(level * 270))
-        start_deg = 135 * 16  # start at bottom-left (135° = 7:30)
-
-        rect = QRectF(cx - r, cy - r, r * 2, r * 2)
-
-        # Color ramp: green (0.0) → yellow (0.5) → orange (1.0)
-        if level < 0.5:
-            t = level / 0.5
-            c = QColor(
-                int(0 + 255 * t),         # R: 0 → 255
-                255,                       # G: 255
-                int(136 - 136 * t),        # B: 136 → 0
-            )
-        else:
-            t = (level - 0.5) / 0.5
-            c = QColor(
-                255,                               # R: 255
-                int(255 - 255 * t),                # G: 255 → 0
-                int(max(0, 68 - 68 * t)),          # B: 68 → 0
-            )
-
-        # Glow behind the arc
-        glow = QColor(c)
-        glow.setAlpha(30)
-        p.setPen(QPen(glow, 8))
-        p.drawArc(rect, start_deg, span_deg * 16)
-
-        # Main arc
-        c.setAlpha(200)
-        pen = QPen(c, 4)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        p.drawArc(rect, start_deg, span_deg * 16)
-
-        # Small numerical indicator below the HUD
-        p.setPen(QColor("#888888"))
-        font = QFont("Consolas", 8)
-        p.setFont(font)
-        p.drawText(QRectF(cx - 20, cy + r + 10, 40, 16),
-                   Qt.AlignmentFlag.AlignCenter, f"{int(level * 100)}%")
 
     def _draw_scanner(self, p: QPainter, cx: float, cy: float):
         """Spinning scanner wedge."""

@@ -8,6 +8,7 @@ Supports GPU (CUDA) and CPU execution with model size selection (tiny, base, sma
 import io
 import logging
 import threading
+import wave
 
 from .base import STTBackend, STTResult, StreamHandle, SetupError, STTError
 from .registry import STTRegistry
@@ -89,12 +90,30 @@ class WhisperLocalBackend(STTBackend):
 
     # ── STTBackend interface ───────────────────────────────────────────
 
+    def _ensure_wav(self, audio: bytes) -> bytes:
+        """Wrap raw 16-bit PCM16 audio in a WAV header if needed.
+
+        The VAD pipeline hands backends raw headerless PCM16 (16 kHz mono).
+        faster-whisper decodes via soundfile, which needs a container such
+        as WAV/RIFF — wrap the raw bytes so they decode, matching the same
+        contract the groq backend already accepts (see cloud.py._ensure_wav).
+        """
+        if audio[:4] == b"RIFF":
+            return audio  # already WAV
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(audio)
+        return buf.getvalue()
+
     def transcribe(self, audio: bytes) -> STTResult:
         """Transcribe PCM or WAV audio bytes using local Whisper."""
         try:
             self._ensure_model_loaded()
             assert self._model is not None
-            audio_stream = io.BytesIO(audio)
+            audio_stream = io.BytesIO(self._ensure_wav(audio))
             segments, info = self._model.transcribe(audio_stream, beam_size=5)
             text = " ".join([segment.text for segment in segments]).strip()
             duration_ms = getattr(info, "duration", 0.0) * 1000
