@@ -136,7 +136,6 @@ class StartupManager:
             ]
             resp = client.chat(messages, None, reason="startup_briefing")
 
-            from orchestrator.error_classifier import _is_llm_error  # type: ignore[attr-defined]
             from orchestrator.core import _is_llm_error as _check_err
 
             if resp and resp.content and not _check_err(resp.content):  # type: ignore[union-attr]
