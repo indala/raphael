@@ -166,7 +166,7 @@ def parse_schedule(schedule_str: str) -> Dict[str, Any]:
     if "T" in s or "t" in s:
         try:
             dt = datetime.fromisoformat(s.replace("z", "+00:00"))
-            return {"kind": "once", "value": dt.isoformat(), "next_run": dt.isoformat()}
+            return {"kind": "once", "value": schedule_str.strip(), "next_run": dt.isoformat()}
         except ValueError:
             pass
     

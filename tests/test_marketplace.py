@@ -190,8 +190,9 @@ class TestExportImport:
     @patch("tools_meta.marketplace._registry_tools")
     def test_export_tool_not_found(self, mock_registry, mock_tests, mock_prod):
         """Reject export of non-existent tool."""
-        mock_prod.__truediv__.return_value = Path("/nonexistent/tool.py")
-        mock_prod.__truediv__.return_value.exists.return_value = False
+        nonexistent = MagicMock()
+        nonexistent.exists.return_value = False
+        mock_prod.__truediv__.return_value = nonexistent
         
         result = marketplace.export_tool("nonexistent")
         assert "not found" in result.lower()

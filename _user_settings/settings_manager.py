@@ -191,8 +191,15 @@ def apply_to_config(config_module):
         if isinstance(existing, bool):
             setattr(config_module, key, bool(val) if not isinstance(val, bool) else val)
         elif isinstance(existing, int):
-            setattr(config_module, key, int(val))
+            # Skip unparseable values instead of crashing at import time.
+            try:
+                setattr(config_module, key, int(val))
+            except (TypeError, ValueError):
+                continue
         elif isinstance(existing, float):
-            setattr(config_module, key, float(val))
+            try:
+                setattr(config_module, key, float(val))
+            except (TypeError, ValueError):
+                continue
         elif (isinstance(existing, str) and isinstance(val, str)) or (isinstance(existing, list) and isinstance(val, list)):
             setattr(config_module, key, val)

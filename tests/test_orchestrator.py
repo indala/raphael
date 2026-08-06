@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 160
+    assert len(executor.tool_map) == 161
 
 
 def test_tool_executor_has_expected_tools():
@@ -46,6 +46,8 @@ def test_tool_executor_has_expected_tools():
         "get_agent_performance",
         # Tool health
         "check_tool_health",
+        # Session cost
+        "get_session_cost",
         # Workflow
         "execute_workflow",
         "list_workflows",

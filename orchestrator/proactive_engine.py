@@ -23,6 +23,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Module-level import so it is patchable in tests and avoids re-importing per call.
+# Guarded: environments without the package get None (topic monitoring disabled).
+try:
+    from duckduckgo_search import DDGS
+except ImportError:  # pragma: no cover - depends on optional dependency
+    DDGS = None  # type: ignore[assignment]
+
 # System prompt appended when running a proactive check
 PROACTIVE_SYSTEM_INSTRUCTION = (
     "\n\n[PROACTIVE_CHECK] The user has been idle for a while. "
@@ -180,11 +187,8 @@ class TopicMonitor:
         """
         if not self._monitors:
             return []
-        
-        # Import DDG here to avoid circular imports
-        try:
-            from duckduckgo_search import DDGS
-        except ImportError:
+
+        if DDGS is None:
             logger.warning("duckduckgo_search not installed, topic monitoring disabled")
             return []
 

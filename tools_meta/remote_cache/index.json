@@ -1,0 +1,28 @@
+{
+  "skills": [
+    {
+      "name": "skill1",
+      "version": "1.0",
+      "description": "Skill 1",
+      "author": "",
+      "tags": [],
+      "rating": 0,
+      "review_count": 0,
+      "download_url": "",
+      "source_marketplace": "skillexchange"
+    },
+    {
+      "name": "skill2",
+      "version": "2.0",
+      "description": "Skill 2",
+      "author": "",
+      "tags": [],
+      "rating": 0,
+      "review_count": 0,
+      "download_url": "",
+      "source_marketplace": "skillexchange"
+    }
+  ],
+  "source": "skillexchange",
+  "cached_at": "2026-08-06T22:11:32.669789"
+}

@@ -153,6 +153,7 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "env_set",
         "process_kill",
         "process_wait",
+        "get_session_cost",
     ),
     ToolDomain.POWER: (
         "power_sleep",

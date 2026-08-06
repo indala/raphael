@@ -127,7 +127,7 @@ PROACTIVE_STORAGE_DIR = DATA_DIR / "proactive"
 # Jobs are defined in _user_settings/cron/jobs.json
 CRON_ENABLED = os.getenv("CRON_ENABLED", "true").lower() in ("1", "true", "yes")
 CRON_TICK_INTERVAL = int(os.getenv("CRON_TICK_INTERVAL", "60"))  # seconds
-CRON_MAX_PARALLEL_JOBS = int(os.getenv("CRON_MAX_PARALLEL_JOBS", "2"))
+CRON_MAX_PARALLEL_JOBS = int(os.getenv("CRON_MAX_PARALLEL_JOBS", "5"))
 CRON_SCRIPT_TIMEOUT = int(os.getenv("CRON_SCRIPT_TIMEOUT", "3600"))  # 1 hour
 CRON_JOB_DIR = DATA_DIR / "cron"
 CRON_VERBOSE_LOGGING = os.getenv("CRON_VERBOSE_LOGGING", "false").lower() in ("1", "true", "yes")
