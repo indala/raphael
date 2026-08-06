@@ -304,7 +304,7 @@ class HudCanvas(QWidget):
     def _draw_particles(self, p: QPainter):
         for pt in self._particles:
             c = pt["color"]
-            c.setAlpha(max(0, min(255, c.alpha() * pt["life"])))
+            c.setAlpha(int(max(0, min(255, c.alpha() * pt["life"]))))
             p.setBrush(QBrush(c))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawEllipse(QPointF(pt["x"], pt["y"]), pt["size"], pt["size"])
