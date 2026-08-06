@@ -3,11 +3,12 @@ Settings dialog — modern tabbed UI for editing all Raphael configuration.
 Settings are saved to settings.toml in the user data directory.
 """
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QCompleter, QDialog, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLayout, QLayoutItem, QLineEdit, QListWidget,
+    QListWidgetItem, QPushButton, QSizePolicy, QSpinBox, QTabWidget,
+    QVBoxLayout, QWidget,
     QDoubleSpinBox, QMessageBox, QDialogButtonBox, QScrollArea, QFrame,
     QAbstractItemView,
 )
@@ -231,6 +232,79 @@ def _make_field(value: str, placeholder: str = "", password: bool = False) -> QL
     if password:
         field.setEchoMode(QLineEdit.EchoMode.Password)
     return field
+
+
+class FlowLayout(QLayout):
+    """A layout that wraps child items onto new lines when they overflow
+    the available width (like CSS flex-wrap). Used for tag rows that would
+    otherwise overflow the fixed window width."""
+
+    def __init__(self, parent: QWidget | None = None, margin: int = 0,
+                 hspacing: int = 6, vspacing: int = 6):
+        super().__init__(parent)
+        self._hspacing = hspacing
+        self._vspacing = vspacing
+        self._items: list[QLayoutItem] = []
+        self.setContentsMargins(margin, margin, margin, margin)
+
+    def addItem(self, item):  # noqa: N802
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index: int):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self) -> Qt.Orientation:
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect: QRect):
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        m = self.contentsMargins()
+        effective = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x = effective.x()
+        y = effective.y()
+        line_height = 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self._hspacing
+            if next_x - self._hspacing > effective.right() and line_height > 0:
+                x = effective.x()
+                y = y + line_height + self._vspacing
+                next_x = x + hint.width() + self._hspacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y()
 
 
 class ScrollableTab(QWidget):
@@ -1065,12 +1139,11 @@ class EndpointsConfigTab(ScrollableTab):
         llm_grid.addWidget(vision_model, 1)
         layout.addRow("LLM Models", llm_grid)
 
-        # Fallback Models row — tag-style badges
+        # Fallback Models row — tag-style badges (wrapping flow layout so
+        # many models wrap instead of overflowing the fixed card width)
         fb_widget = QWidget()
         fb_widget.setStyleSheet("background: transparent;")
-        fb_layout = QHBoxLayout(fb_widget)
-        fb_layout.setContentsMargins(0, 0, 0, 0)
-        fb_layout.setSpacing(6)
+        fb_layout = FlowLayout(fb_widget, margin=0, hspacing=6, vspacing=6)
 
         models = ep.fallback_models or ([ep.fallback_model] if ep.fallback_model else [])
         any_fb = False
@@ -1088,7 +1161,6 @@ class EndpointsConfigTab(ScrollableTab):
             empty = QLabel("—")
             empty.setStyleSheet("color: #475569; font-style: italic;")
             fb_layout.addWidget(empty)
-        fb_layout.addStretch()
         layout.addRow("Fallbacks", fb_widget)
 
         # STT / TTS Models row — read-only display
