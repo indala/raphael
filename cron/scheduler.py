@@ -173,9 +173,6 @@ def tick(verbose: bool = True, sync: bool = True) -> int:
             break
         
         if sync:
-            # Synchronous execution (blocking)
-            run_job_background(job)
-        else:
             # Background thread execution (non-blocking)
             thread = threading.Thread(
                 target=run_job_background,
@@ -184,6 +181,9 @@ def tick(verbose: bool = True, sync: bool = True) -> int:
                 daemon=True,
             )
             thread.start()
+        else:
+            # Synchronous execution (blocking)
+            run_job_background(job)
         
         executed += 1
         running_count += 1

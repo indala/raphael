@@ -63,6 +63,14 @@ from orchestrator.loop_guard import LoopGuard
 logger = logging.getLogger(__name__)
 
 
+def _parse_tool_args(arguments: str | None) -> dict:
+    """Parse a tool call's JSON arguments, never raising on malformed input."""
+    try:
+        return json.loads(arguments) if arguments else {}
+    except json.JSONDecodeError:
+        return {}
+
+
 class _LLMResponse:
     """Simple wrapper to make error responses work like OpenAI response objects."""
     def __init__(self, content: str):
@@ -644,8 +652,7 @@ class LLMClient:
                     with _cf.ThreadPoolExecutor(max_workers=min(len(_safe_calls), 5)) as _pool:
                         _future_map = {
                             _pool.submit(executor.execute, tc.function.name,
-                                        json.loads(tc.function.arguments)
-                                        if tc.function.arguments else {}): tc
+                                        _parse_tool_args(tc.function.arguments)): tc
                             for tc in _safe_calls
                         }
                         for _future in _cf.as_completed(_future_map):
@@ -1645,8 +1652,7 @@ class RaphaelOrchestrator:
                     with _cf.ThreadPoolExecutor(max_workers=min(len(safe_calls), 5)) as pool:
                         _future_map = {
                             pool.submit(self.executor.execute, tc.function.name,
-                                        json.loads(tc.function.arguments)
-                                        if tc.function.arguments else {}): tc
+                                        _parse_tool_args(tc.function.arguments)): tc
                             for tc in safe_calls
                         }
                         for future in _cf.as_completed(_future_map):
@@ -1708,8 +1714,7 @@ class RaphaelOrchestrator:
                             else TOOL_EXECUTED,
                         agent="raphael",
                         tool=tool_call.function.name,
-                        args=json.loads(tool_call.function.arguments)
-                            if tool_call.function.arguments else {},
+                        args=_parse_tool_args(tool_call.function.arguments),
                         result=result[:200],
                         round=round_idx,
                     )
@@ -1717,8 +1722,7 @@ class RaphaelOrchestrator:
                     # ── Tool Failure Loop Guard ──
                     _loop_warning = self._check_tool_loop(
                         tool_call.function.name,
-                        json.loads(tool_call.function.arguments)
-                            if tool_call.function.arguments else {},
+                        _parse_tool_args(tool_call.function.arguments),
                         result,
                     )
                     if _loop_warning:
@@ -1728,8 +1732,7 @@ class RaphaelOrchestrator:
                     if loop_guard is not None:
                         _guard_warning = loop_guard.check(
                             tool_call.function.name,
-                            json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments else {},
+                            _parse_tool_args(tool_call.function.arguments),
                             result,
                         )
                         if _guard_warning:
@@ -2018,8 +2021,7 @@ class RaphaelOrchestrator:
                     with _cf.ThreadPoolExecutor(max_workers=min(len(_safe_calls), 5)) as _pool:
                         _future_map = {
                             _pool.submit(self.executor.execute, tc.function.name,
-                                        json.loads(tc.function.arguments)
-                                        if tc.function.arguments else {}): tc
+                                        _parse_tool_args(tc.function.arguments)): tc
                             for tc in _safe_calls
                         }
                         for _future in _cf.as_completed(_future_map):
@@ -2076,8 +2078,7 @@ class RaphaelOrchestrator:
                     if loop_guard is not None:
                         _guard_warning = loop_guard.check(
                             tool_call.function.name,
-                            json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments else {},
+                            _parse_tool_args(tool_call.function.arguments),
                             result,
                         )
                         if _guard_warning:
@@ -2087,15 +2088,13 @@ class RaphaelOrchestrator:
                         yield ToolErrorEvent(
                             tool=tool_call.function.name, error=result, round=round_idx,
                             agent="raphael",
-                            args=json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments else {},
+                            args=_parse_tool_args(tool_call.function.arguments),
                         )
                     else:
                         yield ToolResultEvent(
                             tool=tool_call.function.name, result=result[:500], round=round_idx,
                             truncated=truncated, agent="raphael",
-                            args=json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments else {},
+                            args=_parse_tool_args(tool_call.function.arguments),
                         )
 
                 # ── Update task progress for next LLM round ──
