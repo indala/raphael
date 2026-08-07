@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QCursor, QGuiApplication, QKeySequence, QShortcut, QTextCursor
+from PyQt6.QtGui import QCursor, QGuiApplication, QKeySequence, QShortcut, QTextCursor, QTextDocument
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -469,21 +469,20 @@ class ContentWindow(QWidget):
         text = self._search_input.text()
         if not text:
             return
-        flags = QTextBrowser.FindFlag(0)  # No special flags
-        # For reverse, we need to use the document find with BackwardCursor
+        # For reverse, we need to use the document find with FindBackward
         cursor = self._browser.textCursor()
         # Move cursor back one character to avoid finding current match
         if cursor.hasSelection():
             pos = cursor.selectionStart()
             cursor.setPosition(pos)
             self._browser.setTextCursor(cursor)
-        found = self._browser.find(text, QTextBrowser.FindFlag.FindBackward)
+        found = self._browser.find(text, QTextDocument.FindFlag.FindBackward)
         if not found:
             # Wrap to bottom
             cursor = self._browser.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
             self._browser.setTextCursor(cursor)
-            self._browser.find(text, QTextBrowser.FindFlag.FindBackward)
+            self._browser.find(text, QTextDocument.FindFlag.FindBackward)
         self._update_search_count()
 
     def _update_search_count(self):
@@ -509,8 +508,18 @@ class ContentWindow(QWidget):
 
     # ── Resize edge detection ──
 
+    _EDGE_TOP = Qt.Edge.TopEdge.value
+    _EDGE_BOTTOM = Qt.Edge.BottomEdge.value
+    _EDGE_LEFT = Qt.Edge.LeftEdge.value
+    _EDGE_RIGHT = Qt.Edge.RightEdge.value
+
+    _EDGE_TOP_LEFT = _EDGE_TOP | _EDGE_LEFT
+    _EDGE_TOP_RIGHT = _EDGE_TOP | _EDGE_RIGHT
+    _EDGE_BOTTOM_LEFT = _EDGE_BOTTOM | _EDGE_LEFT
+    _EDGE_BOTTOM_RIGHT = _EDGE_BOTTOM | _EDGE_RIGHT
+
     def _detect_resize_edge(self, pos) -> int:
-        """Return the edge/corner the mouse is near, or NoEdge."""
+        """Return the edge/corner the mouse is near, or 0."""
         x, y = pos.x(), pos.y()
         w, h = self.width(), self.height()
         e = self._EDGE_PX
@@ -521,36 +530,35 @@ class ContentWindow(QWidget):
         on_bottom = y > h - e
 
         if on_top and on_left:
-            return Qt.Edge.TopLeftEdge
+            return self._EDGE_TOP_LEFT
         if on_top and on_right:
-            return Qt.Edge.TopRightEdge
+            return self._EDGE_TOP_RIGHT
         if on_bottom and on_left:
-            return Qt.Edge.BottomLeftEdge
+            return self._EDGE_BOTTOM_LEFT
         if on_bottom and on_right:
-            return Qt.Edge.BottomRightEdge
+            return self._EDGE_BOTTOM_RIGHT
         if on_top:
-            return Qt.Edge.TopEdge
+            return self._EDGE_TOP
         if on_bottom:
-            return Qt.Edge.BottomEdge
+            return self._EDGE_BOTTOM
         if on_left:
-            return Qt.Edge.LeftEdge
+            return self._EDGE_LEFT
         if on_right:
-            return Qt.Edge.RightEdge
+            return self._EDGE_RIGHT
         return 0
 
-    @staticmethod
-    def _edge_cursor(edge: Qt.Edge) -> Qt.CursorShape:
+    @classmethod
+    def _edge_cursor(cls, edge: int) -> Qt.CursorShape:
         """Return the cursor shape for a given resize edge."""
-        return {
-            Qt.Edge.TopLeftEdge: Qt.CursorShape.SizeFDiagCursor,
-            Qt.Edge.BottomRightEdge: Qt.CursorShape.SizeFDiagCursor,
-            Qt.Edge.TopRightEdge: Qt.CursorShape.SizeBDiagCursor,
-            Qt.Edge.BottomLeftEdge: Qt.CursorShape.SizeBDiagCursor,
-            Qt.Edge.TopEdge: Qt.CursorShape.SizeVerCursor,
-            Qt.Edge.BottomEdge: Qt.CursorShape.SizeVerCursor,
-            Qt.Edge.LeftEdge: Qt.CursorShape.SizeHorCursor,
-            Qt.Edge.RightEdge: Qt.CursorShape.SizeHorCursor,
-        }.get(edge, Qt.CursorShape.ArrowCursor)
+        if edge in (cls._EDGE_TOP_LEFT, cls._EDGE_BOTTOM_RIGHT):
+            return Qt.CursorShape.SizeFDiagCursor
+        if edge in (cls._EDGE_TOP_RIGHT, cls._EDGE_BOTTOM_LEFT):
+            return Qt.CursorShape.SizeBDiagCursor
+        if edge in (cls._EDGE_TOP, cls._EDGE_BOTTOM):
+            return Qt.CursorShape.SizeVerCursor
+        if edge in (cls._EDGE_LEFT, cls._EDGE_RIGHT):
+            return Qt.CursorShape.SizeHorCursor
+        return Qt.CursorShape.ArrowCursor
 
     def _apply_edge_snap(self, pos):
         """Snap window position to screen edges within _SNAP_PX threshold."""
@@ -603,25 +611,25 @@ class ContentWindow(QWidget):
             new_w = geo.width()
             new_h = geo.height()
 
-            if edge & Qt.Edge.LeftEdge:
+            if edge & self._EDGE_LEFT:
                 new_x = geo.x() + delta.x()
                 new_w = geo.width() - delta.x()
-            if edge & Qt.Edge.RightEdge:
+            if edge & self._EDGE_RIGHT:
                 new_w = geo.width() + delta.x()
-            if edge & Qt.Edge.TopEdge:
+            if edge & self._EDGE_TOP:
                 new_y = geo.y() + delta.y()
                 new_h = geo.height() - delta.y()
-            if edge & Qt.Edge.BottomEdge:
+            if edge & self._EDGE_BOTTOM:
                 new_h = geo.height() + delta.y()
 
             # Enforce minimums
             if new_w < min_w:
                 new_w = min_w
-                if edge & Qt.Edge.LeftEdge:
+                if edge & self._EDGE_LEFT:
                     new_x = geo.right() - min_w
             if new_h < min_h:
                 new_h = min_h
-                if edge & Qt.Edge.TopEdge:
+                if edge & self._EDGE_TOP:
                     new_y = geo.bottom() - min_h
 
             self.setGeometry(new_x, new_y, new_w, new_h)
