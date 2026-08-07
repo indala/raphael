@@ -46,6 +46,7 @@ class RaphaelTrayIcon(QSystemTrayIcon):
     toggle_mute_requested = pyqtSignal()
     toggle_tts_requested = pyqtSignal()
     take_screenshot_requested = pyqtSignal()
+    open_music_requested = pyqtSignal()
     open_settings_requested = pyqtSignal()
     exit_requested = pyqtSignal()
 
@@ -104,6 +105,12 @@ class RaphaelTrayIcon(QSystemTrayIcon):
         self._act_screenshot = QAction("📸 Take Screenshot", self)
         self._act_screenshot.triggered.connect(self.take_screenshot_requested.emit)
         self._menu.addAction(self._act_screenshot)
+
+        self._menu.addSeparator()
+
+        self._act_music = QAction("🎵 Music Player", self)
+        self._act_music.triggered.connect(self.open_music_requested.emit)
+        self._menu.addAction(self._act_music)
 
         self._menu.addSeparator()
 

@@ -10,8 +10,9 @@ import queue
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
-from PyQt6.QtCore import QTimer, QObject, pyqtSignal
+from PyQt6.QtCore import QPoint, QTimer, QObject, pyqtSignal
 
 import config
 from controller.state import state
@@ -101,6 +102,9 @@ class RaphaelController(QObject):
         self._processing_timer.setSingleShot(True)
         self._processing_timer.timeout.connect(self._processing_timeout)
 
+        # ── Floating Minion State ──
+        self._minion_response_pending = False  # True when minion submitted a message
+
         # ── Active Listening & Sleep State ──
         self.wake_word_required_by_default = state.wake_word_required
         self._active_listening_timer = QTimer(self)
@@ -134,6 +138,23 @@ class RaphaelController(QObject):
         self.signals.task_status_changed.connect(self._handle_task_status_changed_gui)
         self.signals.task_finished.connect(self._handle_task_finished_gui)
         self.signals.orchestrator_ready.connect(self._on_orchestrator_ready)
+
+        # ── Reactive state subscriptions (replaces manual ui.set_* calls) ──
+        # on_change callbacks fire on the *setting* thread.  For properties
+        # that may be set from background threads (e.g. tts_speaking), we
+        # defer the UI update to the main event loop.
+        def _on_state(prop: str, val: Any) -> None:
+            if prop == "muted":
+                self.ui.set_muted(val)
+            elif prop == "tts_enabled":
+                self.ui.set_tts_enabled(val)
+
+        def _on_state_deferred(prop: str, val: Any) -> None:
+            """UI-safe wrapper — always delivers on the main thread."""
+            QTimer.singleShot(0, lambda p=prop, v=val: _on_state(p, v))
+
+        state.on_change("muted", _on_state_deferred)
+        state.on_change("tts_enabled", _on_state_deferred)
 
         # TTS Queue Worker (serializes all TTS to prevent thread explosion)
         import collections
@@ -239,10 +260,6 @@ class RaphaelController(QObject):
         except Exception:
             pass
 
-        # Initialize button states
-        self.ui.set_muted(state.muted)
-        self.ui.set_tts_enabled(state.tts_enabled)
-
         # Next phase: tray, hotkeys, event bus, startup greeting
         self.ui.update_splash(90, "Configuring system tray & hotkeys...")
         QTimer.singleShot(300, self._init_phase3)
@@ -257,10 +274,43 @@ class RaphaelController(QObject):
             self.tray_icon.toggle_mute_requested.connect(self._toggle_mute)
             self.tray_icon.toggle_tts_requested.connect(self._toggle_tts)
             self.tray_icon.open_settings_requested.connect(self._open_settings)
+            self.tray_icon.open_music_requested.connect(self._open_music_popup)
             self.tray_icon.exit_requested.connect(self.ui.exit_app)
             self.tray_icon.show()
         except Exception as e:
             logger.warning("Failed to initialize system tray icon: %s", e)
+
+        # ── Floating Minion Icon + Popup Windows ──
+        try:
+            from ui.floating_icon import FloatingIcon, CompactChatInput
+            from ui.window_manager import PopupWindowManager
+
+            self._window_manager = PopupWindowManager()
+            self._floating_icon = FloatingIcon()
+            self._compact_chat = CompactChatInput()
+
+            # Wire floating icon signals
+            self._floating_icon.double_clicked.connect(self._on_floating_double_click)
+            self._floating_icon.single_clicked.connect(self._on_floating_single_click)
+            self._floating_icon.dragged.connect(self._on_icon_dragged)
+
+            # Wire compact chat signals
+            self._compact_chat.message_submitted.connect(self._on_minion_submit)
+            self._compact_chat.stop_requested.connect(self._interrupt)
+            self._compact_chat.closed.connect(self._on_compact_chat_closed)
+
+            # Show floating icon when main window hides, hide when it shows
+            self.ui.window.visibility_changed.connect(self._on_main_window_visibility)
+
+            # Subscribe to tool.executed for auto-opening popup windows
+            from orchestrator.event_bus import EventBus
+            bus = EventBus()
+            bus.subscribe("tool.executed", self._on_tool_executed_event)
+
+            # Show floating icon initially (main window starts visible)
+            self._floating_icon.hide()
+        except Exception as e:
+            logger.warning("Failed to initialize floating minion: %s", e)
 
         # ── Global Hotkey Listener (Win+Shift+R) ──
         try:
@@ -297,9 +347,21 @@ class RaphaelController(QObject):
         return self._processing
 
     def _set_processing(self, value: bool) -> None:
-        """Set the processing state."""
+        """Set the processing state (thread-safe — defers GUI work to main thread)."""
         self._processing = value
+        # Timer start/stop MUST happen on the GUI thread.  When called from a
+        # background thread (e.g. EventBus handler or _submit_proactive), Qt
+        # would emit QBasicTimer warnings and the processing state could get
+        # stuck.  Use singleShot(0, …) to always run on the main event loop.
+        QTimer.singleShot(0, lambda v=value: self._apply_processing_state(v))
         self.signals.processing_state_changed.emit(value)
+
+    def _apply_processing_state(self, value: bool) -> None:
+        """Apply processing timer start/stop on the main thread."""
+        if value:
+            self._processing_timer.start(180000)
+        else:
+            self._processing_timer.stop()
 
     def _on_task_status_changed_event(self, event: str, data: dict):
         self.signals.task_status_changed.emit(data)
@@ -348,6 +410,87 @@ class RaphaelController(QObject):
             self._tts_queue.put((text, lambda: self.signals.processing_done.emit()))
         else:
             self._done()
+
+    # ── Floating Minion Handlers ───────────────────────────────────
+
+    def _on_main_window_visibility(self, visible: bool):
+        """Show floating icon when main window hides, hide when it shows."""
+        if not hasattr(self, "_floating_icon"):
+            return
+        if visible:
+            self._floating_icon.hide()
+            # Close compact chat if open
+            if self._compact_chat.isVisible():
+                self._compact_chat.close()
+        else:
+            self._floating_icon.show()
+            self._floating_icon.raise_()
+
+    def _on_floating_single_click(self):
+        """Single click: wake the icon (visual feedback)."""
+        self._floating_icon.start_glow()
+        QTimer.singleShot(600, self._floating_icon.stop_glow)
+
+    def _on_floating_double_click(self):
+        """Double click: open compact chat input near the icon."""
+        if self._compact_chat.isVisible():
+            self._compact_chat.close()
+            return
+        self._compact_chat.popup_near(self._floating_icon.pos())
+
+    def _on_icon_dragged(self, center: QPoint):
+        """Make the compact chat follow the icon when dragged."""
+        if hasattr(self, "_compact_chat") and self._compact_chat.isVisible():
+            self._compact_chat.follow_icon(center)
+
+    def _on_compact_chat_closed(self):
+        """Compact chat was closed."""
+        pass
+
+    def _on_minion_submit(self, text: str):
+        """Handle message submitted from the compact chat input."""
+        if self._is_processing():
+            self._compact_chat.set_processing(True)
+            self.ui.write_log("sys", "Busy processing previous request...")
+            return
+        self._minion_response_pending = True
+        self._compact_chat.set_processing(True)
+        self._floating_icon.set_processing(True)
+        self._submit_message(text)
+
+    def _on_tool_executed_event(self, event: str, data: dict):
+        """Auto-open popup windows for tool results when minion is active."""
+        if not self._minion_response_pending:
+            return
+        tool = data.get("tool", "")
+        result = data.get("result", "")
+        if not tool or not result:
+            return
+        # Route tool results to appropriate popup windows
+        if tool in ("music_play", "music_search"):
+            QTimer.singleShot(0, self._open_music_popup)
+        elif tool in ("web_search", "web_browse", "news_search"):
+            title = f"{tool.replace('_', ' ').title()} Result"
+            QTimer.singleShot(0, lambda t=title, r=result: self._open_content_popup("news", t, r))
+        elif tool in ("read_file", "write_file", "edit_file"):
+            title = f"{tool.replace('_', ' ').title()} Result"
+            QTimer.singleShot(0, lambda t=title, r=result: self._open_content_popup("file", t, r))
+        else:
+            # Generic tool result
+            title = f"{tool.replace('_', ' ').title()} Result"
+            QTimer.singleShot(0, lambda t=title, r=result: self._open_content_popup(tool, t, r))
+
+    def _open_content_popup(self, key: str, title: str, text: str):
+        """Open a content popup window via the window manager."""
+        if not hasattr(self, "_window_manager"):
+            return
+        self._window_manager.show_content(key, title, text)
+
+    def _open_music_popup(self):
+        """Open the standalone music player popup."""
+        if not hasattr(self, "_window_manager"):
+            return
+        self._window_manager.show_music()
 
     # ── File attachment ─────────────────────────────────────────────
 
@@ -414,7 +557,6 @@ class RaphaelController(QObject):
 
     def _mute(self):
         state.muted = True
-        self.ui.set_muted(True)
         self.ui.set_state("MUTED")
         self.ui.write_log("sys", "Microphone off.")
         if state.tts_enabled:
@@ -422,7 +564,6 @@ class RaphaelController(QObject):
 
     def _unmute(self):
         state.muted = False
-        self.ui.set_muted(False)
         if state.wake_word_required:
             self.ui.set_state("SLEEPING")
             self.ui.write_log("sys", "Microphone on (Sleeping).")
@@ -438,7 +579,6 @@ class RaphaelController(QObject):
         from modules.tts import stop as tts_stop
         new_val = not state.tts_enabled
         state.tts_enabled = new_val
-        self.ui.set_tts_enabled(new_val)
         if new_val:
             self.ui.write_log("sys", "Text-to-speech turned on.")
             self._tts_queue.put(("Text to speech enabled.", None))
@@ -763,7 +903,6 @@ class RaphaelController(QObject):
 
         if text_lower in ("turn off microphone", "mute microphone", "microphone off"):
             state.muted = True
-            self.ui.set_muted(True)
             self.ui.set_state("MUTED")
             logger.info("Microphone off.")
             if state.tts_enabled:
@@ -912,6 +1051,25 @@ class RaphaelController(QObject):
 
     def _show_response(self, response: str):
         self.ui.write_log("ai", response)
+
+        # If minion submitted, route final response to a popup window
+        if self._minion_response_pending:
+            self._minion_response_pending = False
+            self._floating_icon.set_processing(False)
+            self._compact_chat.set_processing(False)
+            if hasattr(self, "_window_manager"):
+                self._window_manager.show_content("response", "Raphael", response)
+            if state.tts_enabled:
+                rem = getattr(self, "_stream_tts_buffer", "").strip()
+                self._stream_tts_buffer = ""
+                if rem:
+                    self._tts_queue.put((rem, lambda: self.signals.processing_done.emit()))
+                else:
+                    self._tts_queue.put(("", lambda: self.signals.processing_done.emit()))
+            else:
+                self._done()
+            return
+
         if state.tts_enabled:
             # Flush any remaining sentence fragment in the stream buffer
             rem = getattr(self, "_stream_tts_buffer", "").strip()
@@ -1006,7 +1164,6 @@ class RaphaelController(QObject):
         self._set_processing(False)
         if state.muted:
             self.ui.set_state("MUTED")
-            self.ui.set_muted(True)
         elif state.wake_word_required:
             self.ui.set_state("SLEEPING")
         else:

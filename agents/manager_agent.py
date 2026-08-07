@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MANAGER_TOOLS = [
-    "list_agents", "delegate_to_agent",
+    "list_agents", "delegate_to_agent", "delegate_parallel",
     "web_search", "web_fetch", "get_weather",
     "recall_memory", "save_memory",
     "process_file", "run_system_command",
@@ -42,13 +42,17 @@ class ManagerAgent(BaseAgent):
             "You are Raphael's Manager Agent. You can:\n\n"
             "1. **Delegate tasks** — use `list_agents` to see available agents, "
             "then `delegate_to_agent` to route tasks to specialists\n"
-            "2. **Solve tasks directly** — use your available tools for simple requests\n\n"
-            "For complex tasks: delegate to the right agent. "
-            "For simple tasks: handle them directly.\n\n"
+            "2. **Delegate in parallel** — use `delegate_parallel` to run multiple "
+            "agents concurrently when tasks are independent. Duplicate tasks "
+            "(same agent + similar query) are automatically detected and removed.\n"
+            "3. **Solve tasks directly** — use your available tools for simple requests\n\n"
+            "**Context Handoff:**\n"
+            "When delegating, pass `context` with file paths, screenshots, or prior "
+            "results so the target agent has full information without re-deriving it.\n\n"
             "**Cross-Agent Collaboration:**\n"
             "You can chain delegations. For complex workflows, delegate subtasks to "
-            "specialized agents in sequence. Use `list_agents` to see capabilities "
-            "and `delegate_to_agent(name, query)` to hand off work. "
+            "specialized agents. Use `list_agents` to see capabilities "
+            "and `delegate_to_agent(name, query, context={...})` to hand off work. "
             "Each agent returns its result — use it to decide the next step."
         )
         if agent_context:

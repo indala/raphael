@@ -18,6 +18,7 @@ Data flow:
 
 import json
 import logging
+import threading
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,8 @@ import config
 AGENT_MEMORY_PATH = config.ROAMING_DIR / "memory" / "agent_evolution.json"
 
 _MAX_INTERACTIONS = 50  # ring buffer per agent
+_CONSOLIDATION_THRESHOLD = 30  # auto-consolidate after this many interactions per agent
+_consolidation_lock = threading.Lock()
 
 
 # ──────────────────────────────────────────────
@@ -140,6 +143,38 @@ def get_context(agent_name: str, query: str) -> str:
     )
 
 
+def maybe_consolidate():
+    """Check if any agent has exceeded the interaction threshold and trigger consolidation.
+
+    Runs consolidation in a background thread to avoid blocking the caller.
+    Uses a lock to prevent concurrent consolidation passes.
+    """
+    if not _consolidation_lock.acquire(blocking=False):
+        return  # already consolidating
+
+    def _run():
+        try:
+            memory = _load()
+            if not memory:
+                return
+            needs_consolidation = False
+            for agent_name, agent_data in memory.items():
+                interactions = agent_data.get("interactions", [])
+                if len(interactions) >= _CONSOLIDATION_THRESHOLD:
+                    needs_consolidation = True
+                    break
+            if needs_consolidation:
+                logger.info("Auto-consolidation triggered (threshold=%d)", _CONSOLIDATION_THRESHOLD)
+                consolidate()
+        except Exception as e:
+            logger.debug("Auto-consolidation check failed: %s", e)
+        finally:
+            _consolidation_lock.release()
+
+    thread = threading.Thread(target=_run, daemon=True, name="agent-memory-consolidate")
+    thread.start()
+
+
 def record_interaction(
     agent_name: str,
     query: str,
@@ -164,6 +199,9 @@ def record_interaction(
 
     _save(memory)
     logger.debug("Recorded interaction for '%s': %s", agent_name, outcome)
+
+    # Auto-consolidate if interaction count is high enough
+    maybe_consolidate()
 
 
 def process_correction(agent_name: str, original_query: str, correction_text: str):

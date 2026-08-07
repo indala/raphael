@@ -153,6 +153,7 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "env_set",
         "process_kill",
         "process_wait",
+        "get_session_cost",
     ),
     ToolDomain.POWER: (
         "power_sleep",
@@ -201,6 +202,7 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "spawn_agent",
         "list_agents",
         "delegate_to_agent",
+        "delegate_parallel",
         "get_agent_performance",
         "run_in_background",
         "delegate_background",

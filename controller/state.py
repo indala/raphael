@@ -2,15 +2,29 @@
 
 All mutable state that changes during runtime (mute toggle, wake word
 mode, audio availability) lives here with explicit lock protection,
-instead of on `config` module attributes which are not thread-safe.
+instead of on ``config`` module attributes which are not thread-safe.
+
+Reactive pattern: each property setter notifies registered callbacks on
+change, enabling decoupled UI updates.  The controller wires these
+callbacks to ``pyqtSignal``\\s for automatic cross-thread delivery.
 """
 import threading
+from typing import Any, Callable
 
 import config
 
 
 class RuntimeState:
-    """Thread-safe mutable state with lock-protected properties."""
+    """Thread-safe mutable state with reactive change notifications.
+
+    Register a callback for a property::
+
+        state.on_change("muted", my_callback)
+
+    The callback receives ``(property_name, new_value)``.
+    Callbacks always fire on the caller's thread — use ``pyqtSignal``
+    in the controller to marshal to the GUI thread.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -28,6 +42,26 @@ class RuntimeState:
         self._speaker_volume = 100
         self._mic_volume = 100
 
+        # Reactive callbacks: {property_name: [callback, ...]}
+        self._listeners: dict[str, list[Callable[[str, Any], None]]] = {}
+
+    # ── Observer registration ──
+
+    def on_change(self, prop: str, callback: Callable[[str, Any], None]) -> None:
+        """Register *callback* to fire when *prop* changes.
+
+        Callback signature: ``callback(prop_name, new_value)``.
+        """
+        self._listeners.setdefault(prop, []).append(callback)
+
+    def _notify(self, prop: str, value: Any) -> None:
+        """Notify all listeners of a property change (caller's thread)."""
+        for cb in self._listeners.get(prop, ()):
+            try:
+                cb(prop, value)
+            except Exception:
+                pass  # never let a broken listener break state
+
     # ── Muted ──
 
     @property
@@ -37,8 +71,12 @@ class RuntimeState:
 
     @muted.setter
     def muted(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._muted = bool(value)
+            if self._muted == new:
+                return
+            self._muted = new
+        self._notify("muted", new)
 
     # ── Wake word required ──
 
@@ -49,8 +87,12 @@ class RuntimeState:
 
     @wake_word_required.setter
     def wake_word_required(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._wake_word_required = bool(value)
+            if self._wake_word_required == new:
+                return
+            self._wake_word_required = new
+        self._notify("wake_word_required", new)
 
     # ── Audio input available ──
 
@@ -61,8 +103,12 @@ class RuntimeState:
 
     @audio_input_available.setter
     def audio_input_available(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._audio_input_available = bool(value)
+            if self._audio_input_available == new:
+                return
+            self._audio_input_available = new
+        self._notify("audio_input_available", new)
 
     # ── Audio output available ──
 
@@ -73,8 +119,12 @@ class RuntimeState:
 
     @audio_output_available.setter
     def audio_output_available(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._audio_output_available = bool(value)
+            if self._audio_output_available == new:
+                return
+            self._audio_output_available = new
+        self._notify("audio_output_available", new)
 
     # ── TTS enabled ──
 
@@ -85,10 +135,14 @@ class RuntimeState:
 
     @tts_enabled.setter
     def tts_enabled(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._tts_enabled = bool(value)
+            if self._tts_enabled == new:
+                return
+            self._tts_enabled = new
+        self._notify("tts_enabled", new)
 
-    # ── Memory consolidation flag ──
+    # ── Memory needs consolidation ──
 
     @property
     def memory_needs_consolidation(self) -> bool:
@@ -97,22 +151,14 @@ class RuntimeState:
 
     @memory_needs_consolidation.setter
     def memory_needs_consolidation(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._memory_needs_consolidation = bool(value)
+            if self._memory_needs_consolidation == new:
+                return
+            self._memory_needs_consolidation = new
+        self._notify("memory_needs_consolidation", new)
 
-    # ── Speaker muted (playback hardware) ──
-
-    @property
-    def speaker_muted(self) -> bool:
-        with self._lock:
-            return self._speaker_muted  # type: ignore[no-any-return]
-
-    @speaker_muted.setter
-    def speaker_muted(self, value: bool):
-        with self._lock:
-            self._speaker_muted = bool(value)
-
-    # ── TTS speaking (used by STT to avoid feedback loop) ──
+    # ── TTS speaking ──
 
     @property
     def tts_speaking(self) -> bool:
@@ -121,22 +167,45 @@ class RuntimeState:
 
     @tts_speaking.setter
     def tts_speaking(self, value: bool):
+        new = bool(value)
         with self._lock:
-            self._tts_speaking = bool(value)
+            if self._tts_speaking == new:
+                return
+            self._tts_speaking = new
+        self._notify("tts_speaking", new)
 
-    # ── TTS voice override (persisted choice used by speak) ──
+    # ── TTS voice ──
 
     @property
     def tts_voice(self) -> str | None:
         with self._lock:
-            return self._tts_voice  # type: ignore[no-any-return]
+            return self._tts_voice
 
     @tts_voice.setter
     def tts_voice(self, value: str | None):
         with self._lock:
-            self._tts_voice = (value or "").strip() or None
+            if self._tts_voice == value:
+                return
+            self._tts_voice = value
+        self._notify("tts_voice", value)
 
-    # ── Speaker volume (0-100) ──
+    # ── Speaker muted ──
+
+    @property
+    def speaker_muted(self) -> bool:
+        with self._lock:
+            return self._speaker_muted  # type: ignore[no-any-return]
+
+    @speaker_muted.setter
+    def speaker_muted(self, value: bool):
+        new = bool(value)
+        with self._lock:
+            if self._speaker_muted == new:
+                return
+            self._speaker_muted = new
+        self._notify("speaker_muted", new)
+
+    # ── Speaker volume ──
 
     @property
     def speaker_volume(self) -> int:
@@ -145,10 +214,14 @@ class RuntimeState:
 
     @speaker_volume.setter
     def speaker_volume(self, value: int):
+        new = int(value)
         with self._lock:
-            self._speaker_volume = max(0, min(100, int(value)))
+            if self._speaker_volume == new:
+                return
+            self._speaker_volume = new
+        self._notify("speaker_volume", new)
 
-    # ── Microphone volume (0-100) ──
+    # ── Mic volume ──
 
     @property
     def mic_volume(self) -> int:
@@ -157,9 +230,14 @@ class RuntimeState:
 
     @mic_volume.setter
     def mic_volume(self, value: int):
+        new = int(value)
         with self._lock:
-            self._mic_volume = max(0, min(100, int(value)))
+            if self._mic_volume == new:
+                return
+            self._mic_volume = new
+        self._notify("mic_volume", new)
 
 
-# Singleton — import this in any module that needs runtime state
+# Module-level singleton (created at import time — safe because
+# RuntimeState no longer inherits QObject).
 state = RuntimeState()

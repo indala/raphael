@@ -80,10 +80,11 @@ class MusicPanel(QWidget):
 
     _state_changed = pyqtSignal(object, object)  # old, new
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, standalone: bool = False):
         super().__init__(parent)
         self._player = MusicPlayer.get_instance()
-        self.setVisible(False)  # hidden until music is detected
+        self._standalone = standalone
+        self.setVisible(standalone)  # standalone: always visible; HUD: hidden until music
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 4)
@@ -259,7 +260,10 @@ class MusicPanel(QWidget):
         else:  # IDLE, STOPPED
             if self._timer.isActive():
                 self._timer.stop()
-            self.setVisible(False)
+            if not self._standalone:
+                self.setVisible(False)
+            else:
+                self._refresh()
 
     def _run(self, action: str):
         """Execute a player action — ignore errors gracefully."""

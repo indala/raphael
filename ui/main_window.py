@@ -171,6 +171,7 @@ class MainWindow(QMainWindow):
     interrupt_triggered = pyqtSignal()         # emitted on ESC key
     settings_triggered = pyqtSignal()           # emitted when settings requested
     reload_triggered = pyqtSignal()             # emitted when reload requested
+    visibility_changed = pyqtSignal(bool)       # emitted on show/hide (True=visible)
 
     def __init__(self):
         super().__init__()
@@ -573,6 +574,14 @@ class MainWindow(QMainWindow):
         self.chat_input.setFocus()
         self.stop_btn.hide()
         self.interrupt_triggered.emit()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.visibility_changed.emit(True)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.visibility_changed.emit(False)
 
     def closeEvent(self, event):
         if self._is_quitting:

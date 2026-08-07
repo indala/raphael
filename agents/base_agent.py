@@ -28,7 +28,7 @@ class BaseAgent(ABC):
     max_rounds: int = 8
 
     # Delegation tools made available to every agent automatically
-    _DELEGATION_TOOLS = ["list_agents", "delegate_to_agent", "delegate_background", "check_task"]
+    _DELEGATION_TOOLS = ["list_agents", "delegate_to_agent", "delegate_background", "delegate_parallel", "check_task"]
 
     def __init_subclass__(cls, **kwargs):
         """Automatically inject delegation tools into every agent's available_tools."""

@@ -1,9 +1,10 @@
 """
 Agent delegation tools — let agents discover and delegate to each other.
 
-Provides two tools:
+Provides three delegation tools:
 - ``list_agents`` — returns all registered agents with their capabilities
-- ``delegate_to_agent`` — routes a task to another agent
+- ``delegate_to_agent`` — routes a task to another agent (with optional context)
+- ``delegate_parallel`` — runs multiple agents concurrently with duplicate detection
 
 Every agent gets these tools automatically (via BaseAgent.__init_subclass__).
 Delegation depth is tracked per thread to prevent infinite loops (max 3 hops).
@@ -12,6 +13,7 @@ Delegation depth is tracked per thread to prevent infinite loops (max 3 hops).
 import json
 import logging
 import threading
+from difflib import SequenceMatcher
 
 from orchestrator.event_bus import AGENT_DELEGATED, TASK_COMPLETED, EventBus
 from orchestrator.event_payloads import AgentDelegatedPayload, TaskCompletedPayload
@@ -62,12 +64,13 @@ def list_agents() -> str:
     return json.dumps(capabilities, indent=2)
 
 
-def delegate_to_agent(agent_name: str, query: str) -> str:
+def delegate_to_agent(agent_name: str, query: str, context: dict | None = None) -> str:
     """Delegate a task to another agent.
 
     Args:
         agent_name: The name of the agent to handle the task.
         query: The task description to delegate.
+        context: Optional structured context (files, screenshots, prior results).
 
     Returns:
         The other agent's response as a string.
@@ -88,6 +91,17 @@ def delegate_to_agent(agent_name: str, query: str) -> str:
     if agent is None:
         return f"Agent '{agent_name}' not found. Use list_agents to see available agents."
 
+    # Inject context into query if provided
+    effective_query = query
+    if context:
+        context_parts = []
+        for key, value in context.items():
+            context_parts.append(f"  {key}: {value}")
+        context_block = "\n".join(context_parts)
+        effective_query = (
+            f"{query}\n\n[Attached context from parent agent]\n{context_block}"
+        )
+
     new_depth = _push_depth()
     logger.info("Delegating to agent '%s' (depth %d/%d): %s",
                 agent_name, new_depth, _MAX_DELEGATION_DEPTH, query)
@@ -101,10 +115,10 @@ def delegate_to_agent(agent_name: str, query: str) -> str:
         from orchestrator.agent_models import create_agent_llm
         from orchestrator.core import ToolExecutor
 
-        llm = create_agent_llm(agent_name, query=query)
+        llm = create_agent_llm(agent_name, query=effective_query)
         executor = ToolExecutor()
 
-        response = agent.run(query, llm, executor)
+        response = agent.run(effective_query, llm, executor)
         EventBus().publish_typed(
             TASK_COMPLETED,
             TaskCompletedPayload(
@@ -140,6 +154,200 @@ def delegate_background(agent_name: str, query: str) -> str:
     )
     logger.info("Background delegation: agent=%s task=%s query=%.80s", agent_name, task_id, query)
     return task_id
+
+
+# ── Parallel delegation ──────────────────────────────────────────
+
+_SIMILARITY_THRESHOLD = 0.7  # queries above this are "duplicates"
+
+
+def _are_queries_similar(q1: str, q2: str) -> bool:
+    """Check if two queries are similar enough to be considered duplicates."""
+    # Normalize: lowercase, strip whitespace
+    a, b = q1.lower().strip(), q2.lower().strip()
+    if a == b:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= _SIMILARITY_THRESHOLD
+
+
+def _detect_duplicate_tasks(tasks: list[dict]) -> list[dict]:
+    """Detect and deduplicate tasks before parallel submission.
+
+    Rules:
+    - Same agent + similar query = duplicate (keep first occurrence)
+    - Same agent + identical query = duplicate (keep first occurrence)
+
+    Returns deduplicated list with warnings logged for removed duplicates.
+    """
+    seen: list[tuple[str, str]] = []  # (agent_name, query) pairs kept
+    unique: list[dict] = []
+    for task in tasks:
+        agent = task.get("agent_name", "")
+        query = task.get("query", "")
+        is_dup = False
+        for kept_agent, kept_query in seen:
+            if kept_agent == agent and _are_queries_similar(query, kept_query):
+                logger.warning(
+                    "Duplicate task detected: agent='%s' query='%s' (similar to '%s') — skipping",
+                    agent, query[:80], kept_query[:80],
+                )
+                is_dup = True
+                break
+        if not is_dup:
+            seen.append((agent, query))
+            unique.append(task)
+    return unique
+
+
+def delegate_parallel(tasks: list[dict]) -> str:
+    """Delegate multiple tasks to agents concurrently.
+
+    Args:
+        tasks: List of dicts, each with 'agent_name' (str) and 'query' (str).
+               Optional: 'context' (dict) for structured handoff data.
+
+    Returns:
+        JSON string with results for each task, including dedup warnings.
+
+    Example:
+        delegate_parallel([
+            {"agent_name": "researcher", "query": "Find latest news about AI"},
+            {"agent_name": "coding", "query": "Analyze main.py for bugs",
+             "context": {"attached_file": "main.py"}},
+        ])
+    """
+    if not tasks:
+        return json.dumps({"results": [], "message": "No tasks provided."})
+
+    # Validate inputs
+    valid_tasks = []
+    for t in tasks:
+        agent_name = t.get("agent_name", "")
+        query = t.get("query", "")
+        if not agent_name or not query:
+            continue
+        valid_tasks.append({
+            "agent_name": agent_name,
+            "query": query,
+            "context": t.get("context"),
+        })
+
+    if not valid_tasks:
+        return json.dumps({"results": [], "message": "No valid tasks after filtering."})
+
+    # Detect duplicates before submission
+    original_count = len(valid_tasks)
+    unique_tasks = _detect_duplicate_tasks(valid_tasks)
+    dup_count = original_count - len(unique_tasks)
+
+    if dup_count > 0:
+        logger.info(
+            "Parallel delegation: removed %d duplicate(s), %d unique tasks remain",
+            dup_count, len(unique_tasks),
+        )
+
+    # Check depth limit
+    current_depth = _get_depth()
+    if current_depth >= _MAX_DELEGATION_DEPTH:
+        return json.dumps({
+            "results": [],
+            "error": f"Max delegation depth ({_MAX_DELEGATION_DEPTH}) reached.",
+        })
+
+    # Validate all agents exist
+    from agents import _AGENT_REGISTRY, discover_agents
+    discover_agents()
+
+    valid_agents = []
+    for task in unique_tasks:
+        agent = _AGENT_REGISTRY.get(task["agent_name"])
+        if agent is None:
+            valid_agents.append({
+                "agent_name": task["agent_name"],
+                "query": task["query"],
+                "status": "error",
+                "result": f"Agent '{task['agent_name']}' not found.",
+            })
+        else:
+            valid_agents.append({**task, "_agent": agent})
+
+    # Filter to only valid agents for parallel execution
+    to_run = [a for a in valid_agents if "_agent" in a]
+    pre_errors = [a for a in valid_agents if "_agent" not in a]
+
+    if not to_run:
+        return json.dumps({"results": pre_errors})
+
+    # Submit all valid tasks to thread pool concurrently
+    new_depth = _push_depth()
+    logger.info(
+        "Parallel delegation: %d tasks at depth %d/%d",
+        len(to_run), new_depth, _MAX_DELEGATION_DEPTH,
+    )
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from orchestrator.agent_models import create_agent_llm
+    from orchestrator.core import ToolExecutor
+
+    def _run_one(task: dict) -> dict:
+        agent_name = task["agent_name"]
+        query = task["query"]
+        context = task.get("context")
+        agent = task["_agent"]
+
+        # Inject context
+        effective_query = query
+        if context:
+            context_parts = [f"  {k}: {v}" for k, v in context.items()]
+            effective_query = f"{query}\n\n[Attached context]\n" + "\n".join(context_parts)
+
+        EventBus().publish_typed(
+            AGENT_DELEGATED,
+            AgentDelegatedPayload(
+                from_agent="raphael", to_agent=agent_name,
+                query=query, depth=new_depth,
+            ),
+        )
+        try:
+            llm = create_agent_llm(agent_name, query=effective_query)
+            executor = ToolExecutor()
+            response = agent.run(effective_query, llm, executor)
+            EventBus().publish_typed(
+                TASK_COMPLETED,
+                TaskCompletedPayload(
+                    from_agent="raphael", agent=agent_name,
+                    query=query, result=response[:200],
+                ),
+            )
+            return {
+                "agent_name": agent_name,
+                "query": query,
+                "status": "completed",
+                "result": response,
+            }
+        except Exception as e:
+            logger.error("Parallel delegation to '%s' failed: %s", agent_name, e)
+            return {
+                "agent_name": agent_name,
+                "query": query,
+                "status": "error",
+                "result": str(e),
+            }
+
+    try:
+        results = pre_errors  # start with pre-validation errors
+        with ThreadPoolExecutor(max_workers=min(len(to_run), 4)) as pool:
+            futures = {pool.submit(_run_one, task): task for task in to_run}
+            for future in as_completed(futures):
+                results.append(future.result())
+    finally:
+        _pop_depth()
+
+    return json.dumps({
+        "results": results,
+        "dedup_count": dup_count,
+        "total_submitted": len(to_run),
+    })
 
 
 def check_task(task_id: str) -> str:
@@ -240,7 +448,8 @@ def get_schemas() -> list[dict]:
             "function": {
                 "name": "delegate_to_agent",
                 "description": "Delegate a task to another agent. Use list_agents first to find "
-                               "the right agent for the job.",
+                               "the right agent for the job. Optionally pass structured context "
+                               "(file paths, screenshots, prior results).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -252,8 +461,51 @@ def get_schemas() -> list[dict]:
                             "type": "string",
                             "description": "The task description to delegate to the other agent.",
                         },
+                        "context": {
+                            "type": "object",
+                            "description": "Optional structured context: attached_files (list of paths), screenshots, prior_results (dict).",
+                            "additionalProperties": True,
+                        },
                     },
                     "required": ["agent_name", "query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delegate_parallel",
+                "description": "Delegate multiple tasks to different agents concurrently. "
+                               "Automatically detects and removes duplicate tasks (same agent + similar query). "
+                               "Returns results for all agents once complete.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tasks": {
+                            "type": "array",
+                            "description": "List of tasks to delegate in parallel.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "agent_name": {
+                                        "type": "string",
+                                        "description": "Name of the agent to delegate to.",
+                                    },
+                                    "query": {
+                                        "type": "string",
+                                        "description": "The task description for the agent.",
+                                    },
+                                    "context": {
+                                        "type": "object",
+                                        "description": "Optional structured context (files, screenshots, prior results).",
+                                        "additionalProperties": True,
+                                    },
+                                },
+                                "required": ["agent_name", "query"],
+                            },
+                        },
+                    },
+                    "required": ["tasks"],
                 },
             },
         },

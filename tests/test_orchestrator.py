@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 160
+    assert len(executor.tool_map) == 162
 
 
 def test_tool_executor_has_expected_tools():
@@ -29,14 +29,14 @@ def test_tool_executor_has_expected_tools():
         "speak", "generate_chart", "run_command",
         "recall_memory", "save_memory", "web_search", "process_file", "browser_control",
         # System volume
-        "set_system_volume", "get_system_volume",
+        "set_system_volume", "get_system_volume", "get_session_cost",
         "ui_click", "ui_type_text", "ui_press_key", "ui_hotkey",
         "ui_focus_window", "ui_get_mouse_position", "capture_screen",
         "copy_image_to_clipboard", "get_weather", "analyze_image",
         "run_in_background", "get_task_status", "cancel_task", "list_background_tasks",
         "list_knowledge_files", "read_knowledge_file",
         "web_fetch",
-        "list_agents", "delegate_to_agent",
+        "list_agents", "delegate_to_agent", "delegate_parallel",
         # Upstox analytics
         "get_portfolio_holdings", "get_positions", "get_market_quote",
         "get_historical_data", "get_portfolio_summary",

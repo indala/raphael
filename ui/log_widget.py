@@ -414,6 +414,9 @@ class LogWidget(QTextBrowser):
         self._typing_timer.timeout.connect(self._type_char)
         self._typing_timer.setInterval(6)
 
+        # Fast-forward: Space or click skips remaining typewriter animation
+        self._skip_requested = False
+
         self.log_signal.connect(self._enqueue)
         self.stream_signal.connect(self._append_token)
 
@@ -651,7 +654,13 @@ class LogWidget(QTextBrowser):
             cursor.insertText("\n", fmt)
             self.setTextCursor(cursor)
             self.ensureCursorVisible()
+            self._skip_requested = False
             self._start_next()
+            return
+
+        # Fast-forward: flush all remaining items instantly
+        if self._skip_requested:
+            self._flush_remaining()
             return
 
         item = self._typing_items[self._typing_index]
@@ -673,6 +682,53 @@ class LogWidget(QTextBrowser):
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
         self._typing_index += 1
+
+    def _flush_remaining(self):
+        """Instantly render all remaining typing items and advance to next buffer entry."""
+        self._typing_timer.stop()
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        for item in self._typing_items[self._typing_index:]:
+            item_type = item[0]
+            if item_type == "char":
+                _, char, fmt = item
+                cursor.insertText(char, fmt)
+            elif item_type == "html":
+                _, html_content = item
+                cursor.insertBlock()
+                cursor.insertHtml(html_content)
+                cursor.insertBlock()
+
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        self._typing_index = len(self._typing_items)
+        self._skip_requested = False
+        # Finish current entry and start next
+        fmt = QTextCharFormat()
+        fmt.setForeground(_tag_color(self._typing_tag))
+        fmt.setFontFamily("Consolas")
+        fmt.setFontPointSize(11)
+        cursor.insertText("\n", fmt)
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        self._start_next()
+
+    def keyPressEvent(self, event):
+        """Space bar fast-forwards the typewriter animation."""
+        if event.key() == Qt.Key.Key_Space and self._typing_timer.isActive():
+            self._skip_requested = True
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        """Double-click fast-forwards the typewriter animation."""
+        if self._typing_timer.isActive():
+            self._skip_requested = True
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Intercept link clicks to prevent QTextBrowser from navigating (which hides chat)."""
