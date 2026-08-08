@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 162
+    assert len(executor.tool_map) == 166
 
 
 def test_tool_executor_has_expected_tools():
@@ -119,6 +119,8 @@ def test_tool_executor_has_expected_tools():
         "show_recently_played",
         "create_playlist", "delete_playlist", "list_playlists",
         "add_to_playlist", "save_playlist",
+        "like_current_song", "unlike_current_song",
+        "list_liked_songs", "play_liked_songs",
         # Phase D: services, env vars, process lifecycle
         "service_list", "service_start", "service_stop",
         "env_get", "env_set", "process_kill", "process_wait",

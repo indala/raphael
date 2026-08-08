@@ -32,6 +32,27 @@ def _music_data_dir() -> Path:
     return d
 
 
+def _ytdlp_cmd() -> list[str]:
+    """Resolve yt-dlp executable or fallback to python -m yt_dlp."""
+    import os
+    import shutil
+    import sys
+    yt_exe = shutil.which("yt-dlp")
+    if yt_exe:
+        return [yt_exe]
+    user_scripts = Path(sys.prefix) / "Scripts" / "yt-dlp.exe"
+    if user_scripts.exists():
+        return [str(user_scripts)]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        py_ver = f"Python{sys.version_info.major}{sys.version_info.minor}"
+        appdata_scripts = Path(appdata) / "Python" / py_ver / "Scripts" / "yt-dlp.exe"
+        if appdata_scripts.exists():
+            return [str(appdata_scripts)]
+    return [sys.executable, "-m", "yt_dlp"]
+
+
+
 # ── PlaylistManager ─────────────────────────────────────────────────────────
 
 
@@ -171,8 +192,8 @@ class PlaylistManager:
                 downloaded += 1
                 continue
             try:
-                cmd = [
-                    "yt-dlp", f"ytsearch1:{title}",
+                cmd = _ytdlp_cmd() + [
+                    f"ytsearch1:{title}",
                     "-f", "ba",
                     "-o", f"{playlist_dir}/%(title)s_%(id)s.%(ext)s",
                     "--no-playlist", "--restrict-filenames",

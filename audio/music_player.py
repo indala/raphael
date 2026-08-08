@@ -204,6 +204,34 @@ def _ffmpeg_path() -> str:
     return str(bundled) if bundled.exists() else "ffmpeg"
 
 
+def _ffprobe_path() -> str:
+    """Resolve ffprobe.exe — bundled next to main exe, or fallback to PATH."""
+    if getattr(sys, "frozen", False):
+        bundled = Path(sys.executable).parent / "ffprobe.exe"
+    else:
+        bundled = Path(__file__).resolve().parent.parent / "bin" / "ffprobe.exe"
+    return str(bundled) if bundled.exists() else "ffprobe"
+
+
+def _ytdlp_cmd() -> list[str]:
+    """Resolve yt-dlp executable or fallback to python -m yt_dlp."""
+    import shutil
+    yt_exe = shutil.which("yt-dlp")
+    if yt_exe:
+        return [yt_exe]
+    user_scripts = Path(sys.prefix) / "Scripts" / "yt-dlp.exe"
+    if user_scripts.exists():
+        return [str(user_scripts)]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        py_ver = f"Python{sys.version_info.major}{sys.version_info.minor}"
+        appdata_scripts = Path(appdata) / "Python" / py_ver / "Scripts" / "yt-dlp.exe"
+        if appdata_scripts.exists():
+            return [str(appdata_scripts)]
+    return [sys.executable, "-m", "yt_dlp"]
+
+
+
 # ── MusicPlayer ─────────────────────────────────────────────────────────────
 
 
@@ -395,13 +423,13 @@ class MusicPlayer:
     def _resolve_youtube_info(query: str) -> tuple[str, str, float]:
         """Fetch exact YouTube video title, artist/channel, and duration_sec for a search query."""
         try:
+            cmd = _ytdlp_cmd() + [
+                "--print", "%(title)s|||%(uploader)s|||%(duration)s",
+                f"ytsearch1:{query}",
+                "--no-playlist",
+            ]
             r = subprocess.run(
-                [
-                    "yt-dlp",
-                    "--print", "%(title)s|||%(uploader)s|||%(duration)s",
-                    f"ytsearch1:{query}",
-                    "--no-playlist",
-                ],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -426,8 +454,8 @@ class MusicPlayer:
         real_title, real_artist, real_dur = self._resolve_youtube_info(query)
         with self._lock:
             self.stop()
-            cmd = [
-                "yt-dlp", "-f", "ba", "-o", "-",
+            cmd = _ytdlp_cmd() + [
+                "-f", "ba", "-o", "-",
                 f"ytsearch1:{query}",
                 "--no-playlist", "--restrict-filenames",
             ]
@@ -534,8 +562,8 @@ class MusicPlayer:
         """Search YouTube for songs and return metadata without playing."""
         results = []
         try:
-            cmd = [
-                "yt-dlp", "--flat-playlist", "--dump-json",
+            cmd = _ytdlp_cmd() + [
+                "--flat-playlist", "--dump-json",
                 f"ytsearch{max_results}:{query}",
                 "--no-playlist",
             ]
@@ -929,7 +957,7 @@ class MusicPlayer:
         logger.info("Playlist stream %d: %s", index + 1, q)
         try:
             proc = subprocess.Popen(
-                ["yt-dlp", "-f", "ba", "-o", "-",
+                _ytdlp_cmd() + ["-f", "ba", "-o", "-",
                  f"ytsearch1:{q}",
                  "--no-playlist", "--restrict-filenames"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -954,7 +982,7 @@ class MusicPlayer:
         """Quickly get audio duration via ffprobe (no full decode)."""
         try:
             r = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                [_ffprobe_path(), "-v", "quiet", "-print_format", "json",
                  "-show_format", str(filepath)],
                 capture_output=True, text=True, timeout=30,
             )
@@ -1001,8 +1029,8 @@ class MusicPlayer:
     def _download_single(self, query: str) -> SongEntry | None:
         """Download one song from YouTube to temp dir."""
         from audio.music_metadata import extract_title, extract_artist
-        cmd = [
-            "yt-dlp", f"ytsearch1:{query}",
+        cmd = _ytdlp_cmd() + [
+            f"ytsearch1:{query}",
             "-f", "ba",
             "-o", f"{TEMP_DIR}/%(title)s_%(id)s.%(ext)s",
             "--no-playlist", "--restrict-filenames",
@@ -1029,8 +1057,8 @@ class MusicPlayer:
         """Download up to *count* songs matching *query*."""
         from audio.music_metadata import extract_title, extract_artist
         entries = []
-        cmd = [
-            "yt-dlp", f"ytsearch{count}:{query}",
+        cmd = _ytdlp_cmd() + [
+            f"ytsearch{count}:{query}",
             "-f", "ba",
             "-o", f"{TEMP_DIR}/%(title)s_%(id)s.%(ext)s",
             "--no-playlist", "--restrict-filenames",

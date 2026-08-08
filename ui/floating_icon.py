@@ -16,13 +16,14 @@ import logging
 import os
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen, QPixmap, QAction
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QMenu,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class FloatingIcon(QWidget):
 
     double_clicked = pyqtSignal()
     single_clicked = pyqtSignal()
+    right_clicked = pyqtSignal(QPoint)  # emitted with global position on right-click
     dragged = pyqtSignal(QPoint)  # emitted while being dragged with current global pos
 
     def __init__(self, parent=None):
@@ -186,6 +188,10 @@ class FloatingIcon(QWidget):
                     else:
                         self._pending_click = True
                         self._click_timer.start()
+            event.accept()
+        elif event.button() == Qt.MouseButton.RightButton:
+            pos = event.globalPosition().toPoint()
+            self.right_clicked.emit(pos)
             event.accept()
 
     def mouseMoveEvent(self, event):

@@ -204,6 +204,10 @@ class RaphaelController(QObject):
         self.ui.window.interrupt_triggered.connect(self._interrupt)
         self.ui.window.hud.mouse_clicked.connect(self._on_hud_clicked)
 
+        # Wire music panel open request (from HUD music button)
+        if hasattr(self.ui, "music_panel") and self.ui.music_panel:
+            self.ui.music_panel.open_music_requested.connect(self._open_music_popup)
+
         # ── Start voice detection ──
         if config.STT_ENABLED:
             self._start_vad()
@@ -289,6 +293,7 @@ class RaphaelController(QObject):
             # Wire floating icon signals
             self._floating_icon.double_clicked.connect(self._on_floating_double_click)
             self._floating_icon.single_clicked.connect(self._on_floating_single_click)
+            self._floating_icon.right_clicked.connect(self._on_floating_right_click)
             self._floating_icon.dragged.connect(self._on_icon_dragged)
 
             # Wire compact chat signals
@@ -435,6 +440,27 @@ class RaphaelController(QObject):
             return
         self._compact_chat.popup_near(self._floating_icon.pos())
 
+    def _on_floating_right_click(self, pos: QPoint):
+        """Right click: show context menu near the floating icon."""
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QAction
+
+        menu = QMenu()
+        menu.setStyleSheet(
+            "QMenu { background: #1a1a2e; color: #ccc; border: 1px solid #333; }"
+            "QMenu::item:selected { background: #14b8a6; color: white; }"
+        )
+
+        music_action = menu.addAction("Music Player")
+        music_action.triggered.connect(self._open_music_popup)
+
+        menu.addSeparator()
+
+        exit_action = menu.addAction("Exit")
+        exit_action.triggered.connect(self.ui.exit_app)
+
+        menu.exec(pos)
+
     def _on_icon_dragged(self, center: QPoint):
         """Make the compact chat follow the icon when dragged."""
         if hasattr(self, "_compact_chat") and self._compact_chat.isVisible():
@@ -484,9 +510,16 @@ class RaphaelController(QObject):
         self._window_manager.show_content(key, title, text)
 
     def _open_music_popup(self):
-        """Open the standalone music player popup."""
+        """Toggle the standalone music player window (show/hide)."""
         if not hasattr(self, "_window_manager"):
             return
+        from ui.spotify_music_window import SpotifyMusicWindow
+        key = "__music__"
+        if key in self._window_manager._windows:
+            w = self._window_manager._windows[key]
+            if isinstance(w, SpotifyMusicWindow) and w.isVisible():
+                w.hide()
+                return
         self._window_manager.show_music()
 
     # ── File attachment ─────────────────────────────────────────────

@@ -10,7 +10,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 _app = QApplication.instance() or QApplication(sys.argv)
 
-from ui.window_manager import PopupWindowManager, ContentWindow, MusicWindow
+from ui.window_manager import PopupWindowManager, ContentWindow
 
 
 def test_content_window_creation():
@@ -61,11 +61,12 @@ def test_popup_manager_close_removes_key():
 
 
 def test_popup_manager_music():
-    """show_music should create a MusicWindow (or fail gracefully if deps missing)."""
+    """show_music should create a SpotifyMusicWindow (or fail gracefully if deps missing)."""
+    from ui.spotify_music_window import SpotifyMusicWindow
     mgr = PopupWindowManager()
     try:
         win = mgr.show_music()
-        assert isinstance(win, MusicWindow)
+        assert isinstance(win, SpotifyMusicWindow)
         assert mgr.window_count == 1
 
         # Second call reuses

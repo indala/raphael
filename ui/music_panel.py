@@ -80,6 +80,8 @@ class MusicPanel(QWidget):
 
     _state_changed = pyqtSignal(object, object)  # old, new
 
+    open_music_requested = pyqtSignal()
+
     def __init__(self, parent=None, standalone: bool = False):
         super().__init__(parent)
         self._player = MusicPlayer.get_instance()
@@ -307,16 +309,8 @@ class MusicPanel(QWidget):
             logger.warning("MusicPanel action '%s' failed: %s", action, e)
 
     def open_spotify_player(self):
-        """Open or show the standalone SpotifyMusicWindow."""
-        try:
-            if not getattr(self, "_spotify_win_ref", None) or not self._spotify_win_ref.isVisible():
-                from ui.spotify_music_window import SpotifyMusicWindow
-                self._spotify_win_ref = SpotifyMusicWindow(parent=None)
-            self._spotify_win_ref.show()
-            self._spotify_win_ref.activateWindow()
-            self._spotify_win_ref.raise_()
-        except Exception as e:
-            logger.warning("Failed to open Spotify player window: %s", e)
+        """Request opening/toggling the standalone SpotifyMusicWindow via the window manager."""
+        self.open_music_requested.emit()
 
     def _on_volume_changed(self, val: int):
         with contextlib.suppress(Exception):

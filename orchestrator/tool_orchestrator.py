@@ -79,6 +79,10 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "get_playback_status",
         "get_playback_progress",
         "stream_playlist",
+        "like_current_song",
+        "unlike_current_song",
+        "list_liked_songs",
+        "play_liked_songs",
     ),
     ToolDomain.FILES: (
         "read_file",

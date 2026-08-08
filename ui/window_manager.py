@@ -658,76 +658,6 @@ class ContentWindow(QWidget):
         self._resize_start_geo = None
 
 
-# ── MusicWindow ───────────────────────────────────────────────────────────────
-
-class MusicWindow(QWidget):
-    """Standalone window wrapping a MusicPanel in standalone mode."""
-
-    close_requested = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
-        self.setMinimumSize(320, 420)
-        self.resize(340, 480)
-        self._drag_pos = None
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Title bar
-        title_bar = QFrame()
-        title_bar.setFixedHeight(32)
-        title_bar.setStyleSheet(
-            "QFrame { background: #1a1a2e; border-bottom: 1px solid #333; }"
-        )
-        tb_layout = QHBoxLayout(title_bar)
-        tb_layout.setContentsMargins(10, 0, 4, 0)
-
-        label = QLabel("Music Player")
-        label.setStyleSheet("color: #ccc; font-size: 12px;")
-        tb_layout.addWidget(label)
-        tb_layout.addStretch()
-
-        close_btn = QPushButton("\u2715")
-        close_btn.setFixedSize(28, 24)
-        close_btn.setStyleSheet(
-            "QPushButton { color: #999; border: none; font-size: 13px; }"
-            "QPushButton:hover { color: #ff3366; }"
-        )
-        close_btn.clicked.connect(self._on_close)
-        tb_layout.addWidget(close_btn)
-
-        layout.addWidget(title_bar)
-
-        # MusicPanel in standalone mode
-        from ui.music_panel import MusicPanel
-        self._panel = MusicPanel(standalone=True)
-        layout.addWidget(self._panel)
-
-    def _on_close(self):
-        self.close_requested.emit()
-        self.close()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if self._drag_pos is not None:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-
-
 # ── PopupWindowManager ────────────────────────────────────────────────────────
 
 class PopupWindowManager:
@@ -756,19 +686,20 @@ class PopupWindowManager:
         win.raise_()
         return win
 
-    def show_music(self) -> MusicWindow:
-        """Show (or raise) the standalone music player window."""
+    def show_music(self):
+        """Show (or raise) the SpotifyMusicWindow."""
+        from ui.spotify_music_window import SpotifyMusicWindow
+
         key = "__music__"
         if key in self._windows:
             w = self._windows[key]
-            if isinstance(w, MusicWindow):
+            if isinstance(w, SpotifyMusicWindow):
                 w.show()
                 w.raise_()
                 w.activateWindow()
                 return w
 
-        win = MusicWindow()
-        win.close_requested.connect(lambda: self._remove(key))
+        win = SpotifyMusicWindow(parent=None)
         self._windows[key] = win
         win.show()
         win.raise_()

@@ -373,7 +373,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "like_current_song",
-                "description": "Add the currently playing song to Liked Songs.",
+                "description": "Add the currently playing track to the user's Liked Songs library collection.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -381,7 +381,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "unlike_current_song",
-                "description": "Remove the currently playing song from Liked Songs.",
+                "description": "Remove the currently playing track from the user's Liked Songs library collection.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -389,7 +389,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "list_liked_songs",
-                "description": "List all songs saved in Liked Songs.",
+                "description": "List all songs currently saved in the user's Liked Songs library collection.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
