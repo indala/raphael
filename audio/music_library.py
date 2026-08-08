@@ -197,7 +197,7 @@ class PlaylistManager:
         """Check if a playlist exists in the persistent store."""
         persistent_path = PlaylistManager._playlist_path(temp=False)
         data = _read_json(persistent_path, {})
-        return name in data
+        return bool(name in data)
 
     @staticmethod
     def list_persistent() -> list[str]:
@@ -247,6 +247,80 @@ class RecentlyPlayed:
     def clear():
         path = _music_data_dir() / "recently_played.json"
         _write_json(path, [])
+
+
+# ── LikedSongsManager ───────────────────────────────────────────────────────
+
+
+class LikedSongsManager:
+    """JSON-backed Liked Songs storage in DATA_DIR/music/liked_songs.json."""
+
+    _lock = threading.Lock()
+
+    @staticmethod
+    def _file_path() -> Path:
+        return _music_data_dir() / "liked_songs.json"
+
+    @staticmethod
+    def add(song_info: dict) -> str:
+        """Add a song to Liked Songs."""
+        with LikedSongsManager._lock:
+            path = LikedSongsManager._file_path()
+            data = _read_json(path, [])
+            title = song_info.get("title", "")
+            if not title:
+                return "Cannot like song without a title."
+            # Avoid duplicate
+            if any(s.get("title", "").lower() == title.lower() for s in data):
+                return f"'{title}' is already in your Liked Songs."
+            data.insert(0, song_info)
+            _write_json(path, data)
+            return f"Added '{title}' to Liked Songs ❤️"
+
+    @staticmethod
+    def remove(title: str) -> str:
+        """Remove a song from Liked Songs by title."""
+        with LikedSongsManager._lock:
+            path = LikedSongsManager._file_path()
+            data = _read_json(path, [])
+            initial_len = len(data)
+            data = [s for s in data if s.get("title", "").lower() != title.lower()]
+            if len(data) == initial_len:
+                return f"'{title}' not found in Liked Songs."
+            _write_json(path, data)
+            return f"Removed '{title}' from Liked Songs."
+
+    @staticmethod
+    def is_liked(title: str) -> bool:
+        """Check if a song title is in Liked Songs."""
+        if not title:
+            return False
+        with LikedSongsManager._lock:
+            path = LikedSongsManager._file_path()
+            data = _read_json(path, [])
+            return any(s.get("title", "").lower() == title.lower() for s in data)
+
+    @staticmethod
+    def toggle(song_info: dict) -> bool:
+        """Toggle liked state. Returns True if now liked, False if unliked."""
+        title = song_info.get("title", "")
+        if not title:
+            return False
+        if LikedSongsManager.is_liked(title):
+            LikedSongsManager.remove(title)
+            return False
+        else:
+            LikedSongsManager.add(song_info)
+            return True
+
+    @staticmethod
+    def list() -> list[dict]:
+        """List all liked songs."""
+        with LikedSongsManager._lock:
+            path = LikedSongsManager._file_path()
+            res = _read_json(path, [])
+            return list(res) if isinstance(res, list) else []
+
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────

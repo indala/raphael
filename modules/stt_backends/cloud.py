@@ -9,7 +9,6 @@ Inspired by Zero's internal/dictation/transcriber_cloud.go
 
 import io
 import logging
-import os
 import threading
 import time
 import wave
@@ -95,12 +94,12 @@ class GroqSTTBackend(STTBackend):
                 return True
         except Exception:
             pass
-        # Fallback: config env constant (empty unless set externally)
+        # Fallback: config constant (settings.toml)
         try:
             import config as cfg
-            key = getattr(cfg, "GROQ_API_KEY", "") or os.getenv("GROQ_API_KEY", "")
+            key = getattr(cfg, "GROQ_API_KEY", "")
         except Exception:
-            key = os.getenv("GROQ_API_KEY", "")
+            key = ""
         if not key:
             return False
         self._api_key = key

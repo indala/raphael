@@ -5,7 +5,6 @@ Extracted from main.py for testability and clean separation of concerns.
 """
 
 import logging
-import os
 import queue
 import threading
 import time
@@ -31,12 +30,10 @@ def detect_physical_speaker() -> bool:
     False if all physical jacks are unplugged.
 
     Uses pycaw (Windows Core Audio) to check device states.
-    Falls back to manual HAS_SPEAKER env var if set.
+    Manual override via config HAS_SPEAKER (settings.toml) if set.
     """
     # Manual override
-    manual = getattr(config, "HAS_SPEAKER", None)
-    if manual is None:
-        manual = os.getenv("HAS_SPEAKER", "")
+    manual = getattr(config, "HAS_SPEAKER", "")
     if str(manual).lower() in ("1", "true", "yes"):
         return True
     if str(manual).lower() in ("0", "false", "no"):

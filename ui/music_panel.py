@@ -166,6 +166,29 @@ class MusicPanel(QWidget):
         transport.addWidget(self._play_btn)
         transport.addWidget(self._next_btn)
         transport.addWidget(self._stop_btn)
+
+        # Expand Spotify Player Window button
+        self._spotify_win_ref = None
+        open_spotify_btn = QPushButton("🎵")
+        open_spotify_btn.setFixedSize(28, 24)
+        open_spotify_btn.setToolTip("Open Full Spotify Player (Ctrl+Shift+M)")
+        open_spotify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_spotify_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1db954;
+                color: #000000;
+                font-weight: bold;
+                border-radius: 3px;
+                font-size: 12px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #1ed760;
+            }
+        """)
+        open_spotify_btn.clicked.connect(self.open_spotify_player)
+        transport.addWidget(open_spotify_btn)
+
         transport.addStretch()
 
         # Volume slider
@@ -282,6 +305,18 @@ class MusicPanel(QWidget):
                     p.resume()
         except Exception as e:
             logger.warning("MusicPanel action '%s' failed: %s", action, e)
+
+    def open_spotify_player(self):
+        """Open or show the standalone SpotifyMusicWindow."""
+        try:
+            if not getattr(self, "_spotify_win_ref", None) or not self._spotify_win_ref.isVisible():
+                from ui.spotify_music_window import SpotifyMusicWindow
+                self._spotify_win_ref = SpotifyMusicWindow(parent=None)
+            self._spotify_win_ref.show()
+            self._spotify_win_ref.activateWindow()
+            self._spotify_win_ref.raise_()
+        except Exception as e:
+            logger.warning("Failed to open Spotify player window: %s", e)
 
     def _on_volume_changed(self, val: int):
         with contextlib.suppress(Exception):

@@ -534,6 +534,11 @@ class MainWindow(QMainWindow):
         esc_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         esc_shortcut.activated.connect(self._on_interrupt)
 
+        # ── Global Spotify Music Player shortcut (Ctrl+Shift+M) ──
+        music_shortcut = QShortcut(QKeySequence("Ctrl+Shift+M"), self)
+        music_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        music_shortcut.activated.connect(lambda: self.music_panel.open_spotify_player())
+
     def _open_settings(self):
         """Open the settings dialog in-place."""
         dlg = SettingsDialog(self)

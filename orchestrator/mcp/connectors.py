@@ -11,7 +11,6 @@ Provides pre-configured client connectors for standard external MCP servers:
 
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 
 import config
@@ -40,14 +39,14 @@ STANDARD_MCP_SERVERS: dict[str, MCPServerConfig] = {
         name="postgres",
         command="npx",
         args=["-y", "@modelcontextprotocol/server-postgres"],
-        env={"POSTGRES_URL": os.getenv("POSTGRES_URL", "")},
+        env={"POSTGRES_URL": getattr(config, "POSTGRES_URL", "")},
         enabled=False,
     ),
     "github": MCPServerConfig(
         name="github",
         command="npx",
         args=["-y", "@modelcontextprotocol/server-github"],
-        env={"GITHUB_PERSONAL_ACCESS_TOKEN": os.getenv("GITHUB_TOKEN", "")},
+        env={"GITHUB_PERSONAL_ACCESS_TOKEN": getattr(config, "GITHUB_TOKEN", "")},
         enabled=False,
     ),
     "memory": MCPServerConfig(
@@ -73,8 +72,8 @@ class MCPConnectorRegistry:
         self._load_custom_configs()
 
     def _load_custom_configs(self):
-        """Load user-defined MCP server configs from environment or config file."""
-        mcp_config_json = os.getenv("MCP_SERVERS_JSON", "")
+        """Load user-defined MCP server configs from config (settings.toml)."""
+        mcp_config_json = getattr(config, "MCP_SERVERS_JSON", "")
         if mcp_config_json:
             try:
                 custom_dict = json.loads(mcp_config_json)

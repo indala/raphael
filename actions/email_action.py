@@ -8,7 +8,6 @@ and fetching/searching inbox emails via IMAP.
 import email
 import imaplib
 import logging
-import os
 import smtplib
 from email.header import decode_header
 from email.mime.application import MIMEApplication
@@ -22,14 +21,14 @@ logger = logging.getLogger(__name__)
 
 
 def _get_config():
-    """Retrieve email configuration parameters from config / environment."""
+    """Retrieve email configuration parameters from config (settings.toml)."""
     return {
-        "smtp_host": getattr(config, "EMAIL_HOST", os.getenv("EMAIL_HOST", "smtp.gmail.com")),
-        "smtp_port": int(getattr(config, "EMAIL_PORT", os.getenv("EMAIL_PORT", "587"))),
-        "user": getattr(config, "EMAIL_USER", os.getenv("EMAIL_USER", "")),
-        "password": getattr(config, "EMAIL_PASSWORD", os.getenv("EMAIL_PASSWORD", "")),
-        "imap_host": getattr(config, "IMAP_HOST", os.getenv("IMAP_HOST", "imap.gmail.com")),
-        "imap_port": int(getattr(config, "IMAP_PORT", os.getenv("IMAP_PORT", "993"))),
+        "smtp_host": getattr(config, "EMAIL_HOST", "smtp.gmail.com"),
+        "smtp_port": int(getattr(config, "EMAIL_PORT", 587)),
+        "user": getattr(config, "EMAIL_USER", ""),
+        "password": getattr(config, "EMAIL_PASSWORD", ""),
+        "imap_host": getattr(config, "IMAP_HOST", "imap.gmail.com"),
+        "imap_port": int(getattr(config, "IMAP_PORT", 993)),
     }
 
 

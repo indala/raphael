@@ -7,7 +7,7 @@ or ``RecentlyPlayed`` classes.
 import logging
 from pathlib import Path
 
-from audio.music_library import PlaylistManager, RecentlyPlayed
+from audio.music_library import PlaylistManager, RecentlyPlayed, LikedSongsManager
 from audio.music_player import MusicPlayer, SongEntry
 
 logger = logging.getLogger(__name__)
@@ -368,6 +368,45 @@ def get_schemas() -> list[dict]:
                 },
             },
         },
+        # ═══ Liked Songs ═══════════════════════════════════════════════════
+        {
+            "type": "function",
+            "function": {
+                "name": "like_current_song",
+                "description": "Add the currently playing song to Liked Songs.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "unlike_current_song",
+                "description": "Remove the currently playing song from Liked Songs.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_liked_songs",
+                "description": "List all songs saved in Liked Songs.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "play_liked_songs",
+                "description": "Play songs from Liked Songs collection, optionally shuffled.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "shuffle": {"type": "boolean", "description": "Play in random order", "default": False},
+                    },
+                    "required": [],
+                },
+            },
+        },
         # ═══ History ═══════════════════════════════════════════════════════
         {
             "type": "function",
@@ -580,15 +619,15 @@ def remove_from_library(song_name: str) -> str:
 
 
 def create_playlist(name: str) -> str:
-    return str(PlaylistManager.create(name))
+    return PlaylistManager.create(name)
 
 
 def add_to_playlist(playlist_name: str, song_name: str) -> str:
-    return str(PlaylistManager.add_song(playlist_name, {"title": song_name, "artist": ""}))
+    return PlaylistManager.add_song(playlist_name, {"title": song_name, "artist": ""})
 
 
 def delete_playlist(name: str) -> str:
-    return str(PlaylistManager.delete(name))
+    return PlaylistManager.delete(name)
 
 
 def list_playlists() -> str:
@@ -621,4 +660,59 @@ def show_recently_played(limit: int = 10) -> str:
 def save_playlist(name: str) -> str:
     """Permanently save a playlist: copy to DATA_DIR + download all songs."""
     from audio.music_library import PlaylistManager
-    return str(PlaylistManager.save_to_disk(name))
+    return PlaylistManager.save_to_disk(name)
+
+
+def like_current_song() -> str:
+    """Add current song to Liked Songs."""
+    status = _player().get_playback_status()
+    title = status.get("title")
+    if not title:
+        return "No song currently playing to like."
+    artist = status.get("artist", "")
+    filepath = status.get("current_song", "")
+    song_info = {"title": title, "artist": artist, "filepath": filepath}
+    return LikedSongsManager.add(song_info)
+
+
+def unlike_current_song() -> str:
+    """Remove current song from Liked Songs."""
+    status = _player().get_playback_status()
+    title = status.get("title")
+    if not title:
+        return "No song currently playing to unlike."
+    return LikedSongsManager.remove(title)
+
+
+def list_liked_songs() -> str:
+    """List all Liked Songs."""
+    songs = LikedSongsManager.list()
+    if not songs:
+        return "Your Liked Songs collection is currently empty."
+    lines = [f"Liked Songs ({len(songs)}):"]
+    for i, s in enumerate(songs, 1):
+        t = s.get("title", "Unknown")
+        a = s.get("artist", "")
+        label = f"{t} - {a}" if a else t
+        lines.append(f"{i}. {label}")
+    return "\n".join(lines)
+
+
+def play_liked_songs(shuffle: bool = False) -> str:
+    """Play Liked Songs collection."""
+    songs = LikedSongsManager.list()
+    if not songs:
+        return "No Liked Songs to play."
+    p = _player()
+    p.stop()
+    import random
+    track_list = list(songs)
+    if shuffle:
+        random.shuffle(track_list)
+    for s in track_list:
+        title = s.get("title", "")
+        if title:
+            p.add_to_queue(title)
+    p.resume()
+    return f"Playing Liked Songs collection ({len(track_list)} songs, shuffle={'ON' if shuffle else 'OFF'})."
+
