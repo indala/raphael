@@ -12,18 +12,21 @@ from .log_widget import LogWidget
 from .system_metrics import SystemMonitor
 from .file_drop_zone import FileDropZone
 from .settings_dialog import SettingsDialog
+from .hotkey_dialog import HotkeyDialog
 
 
 class TaskBadge(QWidget):
-    """Visual capsule badge for a background task."""
+    """Visual capsule badge for a background task with elapsed time & progress."""
 
     def __init__(self, task_id: str, label: str, status: str, tool_name: str = "", current_action: str = "", parent=None):
         super().__init__(parent)
+        import time
         self.task_id = task_id
         self.label_text = label
         self.status_text = status
         self.tool_name = tool_name
         self.current_action = current_action
+        self._start_time = time.time()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -51,6 +54,10 @@ class TaskBadge(QWidget):
 
         header_layout.addStretch()
 
+        self.lbl_elapsed = QLabel("0s")
+        self.lbl_elapsed.setStyleSheet("color: #6688aa; font-family: Consolas; font-size: 9px; border: none; background: transparent;")
+        header_layout.addWidget(self.lbl_elapsed)
+
         self.lbl_status = QLabel()
         self.lbl_status.setStyleSheet("""
             font-family: Consolas;
@@ -72,7 +79,28 @@ class TaskBadge(QWidget):
         """)
         layout.addWidget(self.lbl_action)
 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(3)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background: #0c1824; border: none; border-radius: 1px; }
+            QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00d4ff, stop:1 #14b8a6); border-radius: 1px; }
+        """)
+        self.progress_bar.setRange(0, 0)  # Indeterminate pulse
+        layout.addWidget(self.progress_bar)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._update_timer)
+
         self.update_status(status, current_action)
+
+    def _update_timer(self):
+        import time
+        elapsed = int(time.time() - self._start_time)
+        m, s = divmod(elapsed, 60)
+        time_str = f"{m}m {s}s" if m > 0 else f"{s}s"
+        self.lbl_elapsed.setText(time_str)
 
     def update_status(self, status: str, current_action: str = ""):
         self.status_text = status
@@ -88,25 +116,38 @@ class TaskBadge(QWidget):
             self.lbl_status.setText("● PENDING")
             self.lbl_status.setStyleSheet("color: #888888; font-family: Consolas; font-size: 10px; border: none; background: transparent;")
             self.setStyleSheet("background-color: #0b0f14; border: 1px solid #1a2a35; border-radius: 6px;")
+            self.progress_bar.hide()
+            self._timer.stop()
         elif status == "running":
             self.lbl_status.setText("⟳ RUNNING")
             self.lbl_status.setStyleSheet("color: #00d4ff; font-family: Consolas; font-size: 10px; border: none; background: transparent;")
             self.setStyleSheet("background-color: #011424; border: 1px solid #00d4ff; border-radius: 6px;")
+            self.progress_bar.show()
+            if not self._timer.isActive():
+                self._timer.start()
         elif status == "done":
             self.lbl_status.setText("✓ DONE")
             self.lbl_status.setStyleSheet("color: #00ff88; font-family: Consolas; font-size: 10px; border: none; background: transparent;")
             self.setStyleSheet("background-color: #001a11; border: 1px solid #00ff88; border-radius: 6px;")
             self.lbl_action.hide()
+            self.progress_bar.hide()
+            self._timer.stop()
+            self._update_timer()
         elif status == "failed":
             self.lbl_status.setText("✗ FAILED")
             self.lbl_status.setStyleSheet("color: #ff3366; font-family: Consolas; font-size: 10px; border: none; background: transparent;")
             self.setStyleSheet("background-color: #1a050a; border: 1px solid #ff3366; border-radius: 6px;")
             self.lbl_action.hide()
+            self.progress_bar.hide()
+            self._timer.stop()
+            self._update_timer()
         elif status == "canceled":
             self.lbl_status.setText("⊘ CANCELED")
             self.lbl_status.setStyleSheet("color: #888888; font-family: Consolas; font-size: 10px; border: none; background: transparent;")
             self.setStyleSheet("background-color: #0a0a0a; border: 1px solid #222222; border-radius: 6px;")
             self.lbl_action.hide()
+            self.progress_bar.hide()
+            self._timer.stop()
 
 
 class MetricBar(QWidget):
@@ -588,6 +629,12 @@ class MainWindow(QMainWindow):
         super().hideEvent(event)
         self.visibility_changed.emit(False)
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        from PyQt6.QtCore import QEvent
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.visibility_changed.emit(not self.isMinimized() and self.isVisible())
+
     def closeEvent(self, event):
         if self._is_quitting:
             self.closing.emit()
@@ -596,11 +643,23 @@ class MainWindow(QMainWindow):
             super().closeEvent(event)
         else:
             event.ignore()
+            if self.isMinimized():
+                self.showNormal()
             self.hide()
+
+    def show_hotkeys_dialog(self):
+        """Display the keyboard shortcuts cheatsheet modal."""
+        dialog = HotkeyDialog(self)
+        dialog.exec()
 
     def keyPressEvent(self, event):
         modifiers = event.modifiers()
         key = event.key()
+        if key == Qt.Key.Key_Question or (key == Qt.Key.Key_Slash and (modifiers & Qt.KeyboardModifier.ShiftModifier)):
+            if not self.chat_input.hasFocus():
+                self.show_hotkeys_dialog()
+                event.accept()
+                return
         if (modifiers & Qt.KeyboardModifier.AltModifier) and (modifiers & Qt.KeyboardModifier.ShiftModifier):
             if key == Qt.Key.Key_B:
                 self.toggle_sleep_triggered.emit()

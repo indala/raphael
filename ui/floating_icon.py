@@ -33,7 +33,7 @@ _ICON_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "icon.png")
 _SNAP_PX = 15  # edge-snapping threshold
 
 
-def _snap_to_screen_edge(pos: QPoint) -> QPoint:
+def _snap_to_screen_edge(pos: QPoint, width: int = _ICON_SIZE, height: int = _ICON_SIZE) -> QPoint:
     """Snap a position to screen edges within _SNAP_PX threshold."""
     screen = QGuiApplication.primaryScreen()
     if screen is None:
@@ -44,12 +44,12 @@ def _snap_to_screen_edge(pos: QPoint) -> QPoint:
 
     if abs(x - geo.left()) < s:
         x = geo.left()
-    elif abs(x - geo.right()) < s:
-        x = geo.right()
+    elif abs((x + width) - geo.right()) < s:
+        x = geo.right() - width
     if abs(y - geo.top()) < s:
         y = geo.top()
-    elif abs(y - geo.bottom()) < s:
-        y = geo.bottom()
+    elif abs((y + height) - geo.bottom()) < s:
+        y = geo.bottom() - height
 
     return QPoint(x, y)
 
@@ -72,6 +72,7 @@ class FloatingIcon(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(_ICON_SIZE, _ICON_SIZE)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setToolTip("Raphael Desktop Assistant — Drag to move • Double-click to chat • Right-click for options")
 
         # Drag state
         self._dragging = False
@@ -170,14 +171,15 @@ class FloatingIcon(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint()
             self._drag_offset = event.globalPosition().toPoint() - self.pos()
             event.accept()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             if self._dragging:
-                moved = (event.globalPosition().toPoint() - self.pos() - self._drag_offset).manhattanLength()
                 self._dragging = False
+                moved = (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength()
                 if moved < 5:
                     # It was a click, not a drag
                     if self._pending_click:
@@ -197,7 +199,7 @@ class FloatingIcon(QWidget):
     def mouseMoveEvent(self, event):
         if self._dragging:
             new_pos = event.globalPosition().toPoint() - self._drag_offset
-            new_pos = _snap_to_screen_edge(new_pos)
+            new_pos = _snap_to_screen_edge(new_pos, _ICON_SIZE, _ICON_SIZE)
             self.move(new_pos)
             self.dragged.emit(new_pos + QPoint(_ICON_SIZE // 2, _ICON_SIZE // 2))
             event.accept()
@@ -263,6 +265,7 @@ class CompactChatInput(QWidget):
 
     message_submitted = pyqtSignal(str)
     stop_requested = pyqtSignal()
+    expand_requested = pyqtSignal()
     closed = pyqtSignal()
 
     _MIN_HEIGHT = 100
@@ -302,11 +305,22 @@ class CompactChatInput(QWidget):
         self._input.textChanged.connect(self._adjust_height)
         layout.addWidget(self._input)
 
-        # Single toggle button (Send / Stop)
+        # Action buttons row (Expand + Send / Stop)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        self._toggle_btn = QPushButton("\u27a4 Send")
+        self._expand_btn = QPushButton("⤢ Expand Window")
+        self._expand_btn.setFixedHeight(28)
+        self._expand_btn.setToolTip("Open Raphael Main HUD Window")
+        self._expand_btn.setStyleSheet(
+            "QPushButton { background: #222736; color: #88aacc; border: 1px solid #30363d; "
+            "border-radius: 6px; font-size: 11px; font-weight: bold; padding: 0 8px; }"
+            "QPushButton:hover { background: #30363d; color: #00d4ff; }"
+        )
+        self._expand_btn.clicked.connect(self._on_expand)
+        btn_row.addWidget(self._expand_btn)
+
+        self._toggle_btn = QPushButton("➤ Send")
         self._toggle_btn.setFixedHeight(28)
         self._toggle_btn.setStyleSheet(self._send_style())
         self._toggle_btn.clicked.connect(self._on_toggle)
@@ -317,6 +331,11 @@ class CompactChatInput(QWidget):
         # Initial size
         self.setFixedHeight(self._MIN_HEIGHT)
         self.setFixedWidth(320)
+
+    def _on_expand(self):
+        """Emit expand request to restore main HUD window."""
+        self.expand_requested.emit()
+        self.close()
 
     # ── Styles ──
 
@@ -407,7 +426,7 @@ class CompactChatInput(QWidget):
 
     def mouseMoveEvent(self, event):
         if self._drag_pos is not None:
-            new_pos = _snap_to_screen_edge(event.globalPosition().toPoint() - self._drag_pos)
+            new_pos = _snap_to_screen_edge(event.globalPosition().toPoint() - self._drag_pos, self.width(), self.height())
             self.move(new_pos)
             event.accept()
 

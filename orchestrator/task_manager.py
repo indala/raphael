@@ -176,16 +176,27 @@ class TaskManager:
 
     @classmethod
     def _save_checkpoint(cls) -> None:
-        """Atomically persist all tasks. Best-effort — must be called while holding _lock."""
+        """Write current in-memory task state to disk atomically.
+
+        Durable-execution checkpointing: called on every state transition so
+        the process state can be reconstructed after a crash.
+        """
         try:
             path = cls._checkpoint_path()
             data = {tid: t.to_dict() for tid, t in cls._tasks.items()}
             tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, path)
-        except OSError:
-            # Never let disk failure break the task flow — best-effort only
-            pass
+            text = json.dumps(data, indent=2, ensure_ascii=False)
+
+            for attempt in range(3):
+                try:
+                    tmp.write_text(text, encoding="utf-8")
+                    os.replace(tmp, path)
+                    return
+                except OSError:
+                    if attempt < 2:
+                        time.sleep(0.02)
+        except Exception as e:
+            logger.warning("Failed to save task checkpoint: %s", e)
 
     @classmethod
     def _load_checkpoint(cls) -> dict[str, Task]:

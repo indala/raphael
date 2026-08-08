@@ -154,3 +154,77 @@ def test_content_window_maximize_restore():
     w._toggle_maximize()
     assert w._saved_geometry is None  # restored
     w.close()
+
+
+def test_controller_ui_state_tracking():
+    """RaphaelController should track UI state ('window' vs 'floating_icon') and support native tools."""
+    from unittest.mock import MagicMock
+    from controller.raphael_controller import RaphaelController, get_controller_instance
+    from orchestrator.tools.native.ui import get_raphael_ui_state, show_raphael_window, hide_raphael_window
+
+    mock_ui = MagicMock()
+    mock_ui.window = MagicMock()
+
+    ctrl = RaphaelController(mock_ui)
+    ctrl._floating_icon = MagicMock()
+    assert get_controller_instance() is ctrl
+    assert ctrl.get_ui_state() == "window"
+    assert ctrl.is_window_state() is True
+    assert ctrl.is_floating_icon_state() is False
+
+    # Simulate main window hiding (closing to floating icon)
+    mock_ui.window.isMinimized.return_value = False
+    ctrl._on_main_window_visibility(False)
+    assert ctrl.get_ui_state() == "floating_icon"
+    assert ctrl.is_floating_icon_state() is True
+    assert ctrl.is_window_state() is False
+    assert "floating_icon" in get_raphael_ui_state()
+
+    # Simulate main window minimizing to taskbar
+    mock_ui.window.isMinimized.return_value = True
+    ctrl._floating_icon.hide = MagicMock()
+    ctrl._on_main_window_visibility(False)
+    assert ctrl._floating_icon.hide.called is True
+
+    # Simulate restoring main window
+    mock_ui.window.isMinimized.return_value = False
+    ctrl._on_main_window_visibility(True)
+    assert ctrl.get_ui_state() == "window"
+    assert "window" in get_raphael_ui_state()
+
+
+def test_ui_ux_enhancements():
+    """Test CompactChatInput expand_requested signal, TaskBadge progress/timer, and HotkeyDialog."""
+    from ui.floating_icon import CompactChatInput, FloatingIcon
+    from ui.main_window import TaskBadge
+    from ui.hotkey_dialog import HotkeyDialog
+
+    # 1. FloatingIcon Tooltip
+    icon = FloatingIcon()
+    assert "Raphael Desktop Assistant" in icon.toolTip()
+    icon.hide()
+
+    # 2. CompactChatInput Expand button
+    chat = CompactChatInput()
+    signal_emitted = False
+    def on_expand():
+        nonlocal signal_emitted
+        signal_emitted = True
+    chat.expand_requested.connect(on_expand)
+    chat._expand_btn.click()
+    assert signal_emitted is True
+
+    # 3. TaskBadge Progress & Timer
+    badge = TaskBadge("task-1", "Search Web", "running", tool_name="web_search")
+    assert badge.progress_bar.isHidden() is False
+    assert badge._timer.isActive() is True
+    badge.update_status("done")
+    assert badge.progress_bar.isHidden() is True
+    assert badge._timer.isActive() is False
+
+    # 4. HotkeyDialog
+    dialog = HotkeyDialog()
+    assert len(dialog.SHORTCUTS) >= 8
+    dialog.close()
+
+

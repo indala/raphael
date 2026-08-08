@@ -21,6 +21,13 @@ import contextlib
 
 logger = logging.getLogger(__name__)
 
+_controller_instance: "RaphaelController | None" = None
+
+
+def get_controller_instance() -> "RaphaelController | None":
+    """Return the active RaphaelController singleton instance."""
+    return _controller_instance
+
 # ── Physical speaker detection ──────────────────────────────────
 
 def detect_physical_speaker() -> bool:
@@ -87,6 +94,8 @@ class RaphaelController(QObject):
 
     def __init__(self, ui):
         super().__init__()
+        global _controller_instance
+        _controller_instance = self
         self.ui = ui
         self.raphael = None  # built in background thread — see _build_orchestrator
         self.vad_detector = None
@@ -99,8 +108,9 @@ class RaphaelController(QObject):
         self._processing_timer.setSingleShot(True)
         self._processing_timer.timeout.connect(self._processing_timeout)
 
-        # ── Floating Minion State ──
+        # ── Floating Minion State & UI State ──
         self._minion_response_pending = False  # True when minion submitted a message
+        self._ui_state: str = "window"  # "window" or "floating_icon"
 
         # ── Active Listening & Sleep State ──
         self.wake_word_required_by_default = state.wake_word_required
@@ -276,7 +286,10 @@ class RaphaelController(QObject):
             self.tray_icon.toggle_tts_requested.connect(self._toggle_tts)
             self.tray_icon.open_settings_requested.connect(self._open_settings)
             self.tray_icon.open_music_requested.connect(self._open_music_popup)
+            self.tray_icon.open_playground_requested.connect(self._open_playground_popup)
             self.tray_icon.exit_requested.connect(self.ui.exit_app)
+            if not state.audio_input_available:
+                self.tray_icon.set_audio_input_available(False)
             self.tray_icon.show()
         except Exception as e:
             logger.warning("Failed to initialize system tray icon: %s", e)
@@ -299,6 +312,7 @@ class RaphaelController(QObject):
             # Wire compact chat signals
             self._compact_chat.message_submitted.connect(self._on_minion_submit)
             self._compact_chat.stop_requested.connect(self._interrupt)
+            self._compact_chat.expand_requested.connect(self.show_main_window)
             self._compact_chat.closed.connect(self._on_compact_chat_closed)
 
             # Show floating icon when main window hides, hide when it shows
@@ -413,20 +427,66 @@ class RaphaelController(QObject):
         else:
             self._done()
 
-    # ── Floating Minion Handlers ───────────────────────────────────
+    # ── Floating Minion Handlers & UI State ───────────────────────
+
+    def get_ui_state(self) -> str:
+        """Return current UI presentation state ('window' or 'floating_icon')."""
+        return getattr(self, "_ui_state", "window")
+
+    def is_floating_icon_state(self) -> bool:
+        """Return True if Raphael is currently in floating icon mode."""
+        return self.get_ui_state() == "floating_icon"
+
+    def is_window_state(self) -> bool:
+        """Return True if Raphael is currently in main HUD window mode."""
+        return self.get_ui_state() == "window"
+
+    def show_main_window(self):
+        """Show and activate Raphael's main HUD window."""
+        if hasattr(self.ui, "window") and self.ui.window is not None:
+            if self.ui.window.isMinimized():
+                self.ui.window.showNormal()
+            self.ui.window.show()
+            self.ui.window.raise_()
+            self.ui.window.activateWindow()
+            self._ui_state = "window"
+            if hasattr(self, "_floating_icon"):
+                self._floating_icon.hide()
+
+    def hide_main_window(self):
+        """Hide Raphael's main HUD window to floating minion icon mode."""
+        if hasattr(self.ui, "window") and self.ui.window is not None:
+            if self.ui.window.isMinimized():
+                self.ui.window.showNormal()
+            self.ui.window.hide()
+            self._ui_state = "floating_icon"
 
     def _on_main_window_visibility(self, visible: bool):
-        """Show floating icon when main window hides, hide when it shows."""
-        if not hasattr(self, "_floating_icon"):
-            return
-        if visible:
-            self._floating_icon.hide()
-            # Close compact chat if open
-            if self._compact_chat.isVisible():
+        """Show floating icon when main window is closed/hidden, but NOT when minimized."""
+        window = getattr(self.ui, "window", None)
+        if window is not None and window.isMinimized():
+            # Main window was minimized to Windows Taskbar - do NOT show floating icon
+            if hasattr(self, "_floating_icon"):
+                self._floating_icon.hide()
+            if hasattr(self, "_compact_chat") and self._compact_chat.isVisible():
                 self._compact_chat.close()
+            logger.info("Raphael UI state updated: MINIMIZED mode (floating icon hidden)")
+            return
+
+        if visible:
+            self._ui_state = "window"
+            if hasattr(self, "_floating_icon"):
+                self._floating_icon.hide()
+            # Close compact chat if open
+            if hasattr(self, "_compact_chat") and self._compact_chat.isVisible():
+                self._compact_chat.close()
+            logger.info("Raphael UI state updated: WINDOW mode")
         else:
-            self._floating_icon.show()
-            self._floating_icon.raise_()
+            self._ui_state = "floating_icon"
+            if hasattr(self, "_floating_icon"):
+                self._floating_icon.show()
+                self._floating_icon.raise_()
+            logger.info("Raphael UI state updated: FLOATING_ICON mode")
 
     def _on_floating_single_click(self):
         """Single click: wake the icon (visual feedback)."""
@@ -447,17 +507,50 @@ class RaphaelController(QObject):
 
         menu = QMenu()
         menu.setStyleSheet(
-            "QMenu { background: #1a1a2e; color: #ccc; border: 1px solid #333; }"
+            "QMenu { background: #1a1a2e; color: #ccc; border: 1px solid #333; padding: 4px; border-radius: 6px; }"
+            "QMenu::item { padding: 6px 16px; border-radius: 4px; }"
             "QMenu::item:selected { background: #14b8a6; color: white; }"
         )
 
-        music_action = menu.addAction("Music Player")
+        hud_action = QAction("🗔  Open Main Window", menu)
+        hud_action.triggered.connect(self.show_main_window)
+        menu.addAction(hud_action)
+
+        music_action = QAction("🎵  Music Player", menu)
         music_action.triggered.connect(self._open_music_popup)
+        menu.addAction(music_action)
+
+        playground_action = QAction("🎨  Raphael Playground", menu)
+        playground_action.triggered.connect(self._open_playground_popup)
+        menu.addAction(playground_action)
 
         menu.addSeparator()
 
-        exit_action = menu.addAction("Exit")
+        if not state.audio_input_available:
+            mic_action = QAction("🎙️  Mic Unavailable (Chat Mode)", menu)
+            mic_action.setToolTip("No microphone detected — chat-only mode active")
+            mic_action.setEnabled(False)
+            menu.addAction(mic_action)
+        else:
+            mic_label = "🎙️  Unmute Microphone" if state.muted else "🎙️  Mute Microphone"
+            mic_action = QAction(mic_label, menu)
+            mic_action.triggered.connect(self._toggle_mute)
+            menu.addAction(mic_action)
+
+        tts_label = "🔊  Disable Voice TTS" if state.tts_enabled else "🔊  Enable Voice TTS"
+        tts_action = QAction(tts_label, menu)
+        tts_action.triggered.connect(self._toggle_tts)
+        menu.addAction(tts_action)
+
+        settings_action = QAction("⚙️  Settings", menu)
+        settings_action.triggered.connect(self._open_settings)
+        menu.addAction(settings_action)
+
+        menu.addSeparator()
+
+        exit_action = QAction("❌  Exit", menu)
         exit_action.triggered.connect(self.ui.exit_app)
+        menu.addAction(exit_action)
 
         menu.exec(pos)
 
@@ -482,8 +575,8 @@ class RaphaelController(QObject):
         self._submit_message(text)
 
     def _on_tool_executed_event(self, event: str, data: dict):
-        """Auto-open popup windows for tool results when minion is active."""
-        if not self._minion_response_pending:
+        """Auto-open popup windows for tool results when in floating minion mode or minion response is pending."""
+        if not (self.is_floating_icon_state() or getattr(self, "_minion_response_pending", False)):
             return
         tool = data.get("tool", "")
         result = data.get("result", "")
@@ -521,6 +614,19 @@ class RaphaelController(QObject):
                 w.hide()
                 return
         self._window_manager.show_music()
+
+    def _open_playground_popup(self):
+        """Toggle the standalone Raphael Playground Studio window (show/hide)."""
+        if not hasattr(self, "_window_manager"):
+            return
+        from ui.playground_window import PlaygroundWindow
+        key = "__playground__"
+        if key in self._window_manager._windows:
+            w = self._window_manager._windows[key]
+            if isinstance(w, PlaygroundWindow) and w.isVisible():
+                w.hide()
+                return
+        self._window_manager.show_playground()
 
     # ── File attachment ─────────────────────────────────────────────
 
@@ -683,8 +789,11 @@ class RaphaelController(QObject):
     def _enter_chat_mode(self):
         self.vad_detector = None
         state.audio_input_available = False
+        self.ui.set_audio_input_available(False)
+        if hasattr(self, "tray_icon") and self.tray_icon:
+            self.tray_icon.set_audio_input_available(False)
         self.ui.set_state("CHAT")
-        logger.info("Chat-only mode active")
+        logger.info("Chat-only mode active (No microphone detected)")
 
     # ── VAD Poll ─────────────────────────────────────────────────────
 
@@ -1082,11 +1191,13 @@ class RaphaelController(QObject):
     def _show_response(self, response: str):
         self.ui.write_log("ai", response)
 
-        # If minion submitted, route final response to a popup window
-        if self._minion_response_pending:
+        # If minion submitted or in floating icon mode, route final response to a popup window
+        if self._minion_response_pending or self.is_floating_icon_state():
             self._minion_response_pending = False
-            self._floating_icon.set_processing(False)
-            self._compact_chat.set_processing(False)
+            if hasattr(self, "_floating_icon"):
+                self._floating_icon.set_processing(False)
+            if hasattr(self, "_compact_chat"):
+                self._compact_chat.set_processing(False)
             if hasattr(self, "_window_manager"):
                 self._window_manager.show_content("response", "Raphael", response)
             if state.tts_enabled:

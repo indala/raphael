@@ -97,6 +97,10 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "get_clipboard_files",
         "save_output",
         "generate_chart",
+        "render_playground_chart",
+        "render_playground_diagram",
+        "render_playground_html",
+        "clear_playground",
         "create_shortcut",
         "recycle_bin_get",
         "recycle_bin_empty",
@@ -110,6 +114,9 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
         "desktop_system_info",
         "desktop_network",
         "desktop_environment",
+        "get_raphael_ui_state",
+        "show_raphael_window",
+        "hide_raphael_window",
         "capture_screen",
         "launch_app",
         "run_command",
@@ -299,6 +306,10 @@ CORE_FALLBACK_TOOLS: Tuple[str, ...] = (
     "save_output",
     "list_tasks",
     "check_task",
+    "render_playground_chart",
+    "render_playground_diagram",
+    "render_playground_html",
+    "get_raphael_ui_state",
 )
 
 

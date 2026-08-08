@@ -60,17 +60,23 @@ class NetworkMonitor:
         self._read_times: list[float] = []
         self._byte_counts: list[int] = []
         self._start_time: float = 0.0
+        self._first_data_time: float = 0.0
         self._total_bytes: int = 0
         self._window_start: float = 0.0
         self._window_bytes: int = 0
 
     def start(self) -> None:
         self._start_time = time.time()
+        self._first_data_time = 0.0
         self._window_start = self._start_time
 
     def record_read(self, nbytes: int) -> None:
         """Record a single pipe read for throughput/jitter calculation."""
         now = time.time()
+        if self._first_data_time == 0.0 and nbytes > 0:
+            self._first_data_time = now
+            self._window_start = now
+
         elapsed = now - self._window_start
         self._total_bytes += nbytes
         self._window_bytes += nbytes
@@ -87,8 +93,10 @@ class NetworkMonitor:
     @property
     def throughput_bps(self) -> float:
         """Measured throughput in bytes/sec (raw PCM)."""
-        elapsed = time.time() - self._start_time
-        if elapsed < 0.5:
+        if self._first_data_time == 0.0:
+            return float(self.REQUIRED_RAW_BPS)
+        elapsed = time.time() - self._first_data_time
+        if elapsed < 1.0:
             return float(self.REQUIRED_RAW_BPS)  # not enough data yet
         return self._total_bytes / elapsed
 
@@ -120,9 +128,11 @@ class NetworkMonitor:
 
     def should_fallback_to_download(self) -> bool:
         """Return True if sustained throughput is too low for streaming."""
-        # Only check after at least 2 seconds of data
-        elapsed = time.time() - self._start_time
-        if elapsed < 2.0:
+        # Only check after at least 5 seconds of active data transfer and at least 10 chunks read
+        if self._first_data_time == 0.0 or len(self._read_times) < 10:
+            return False
+        elapsed = time.time() - self._first_data_time
+        if elapsed < 5.0:
             return False
         return self.throughput_ratio < BITRATE_FALLBACK_FACTOR
 
@@ -214,22 +224,42 @@ def _ffprobe_path() -> str:
 
 
 def _ytdlp_cmd() -> list[str]:
-    """Resolve yt-dlp executable or fallback to python -m yt_dlp."""
+    """Resolve yt-dlp executable or fallback to python -m yt_dlp with ffmpeg location."""
     import shutil
+    ffmpeg_dir = str(Path(_ffmpeg_path()).parent)
+    base = []
     yt_exe = shutil.which("yt-dlp")
     if yt_exe:
-        return [yt_exe]
-    user_scripts = Path(sys.prefix) / "Scripts" / "yt-dlp.exe"
-    if user_scripts.exists():
-        return [str(user_scripts)]
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        py_ver = f"Python{sys.version_info.major}{sys.version_info.minor}"
-        appdata_scripts = Path(appdata) / "Python" / py_ver / "Scripts" / "yt-dlp.exe"
-        if appdata_scripts.exists():
-            return [str(appdata_scripts)]
-    return [sys.executable, "-m", "yt_dlp"]
+        base = [yt_exe]
+    else:
+        user_scripts = Path(sys.prefix) / "Scripts" / "yt-dlp.exe"
+        if user_scripts.exists():
+            base = [str(user_scripts)]
+        else:
+            appdata = os.environ.get("APPDATA")
+            if appdata:
+                py_ver = f"Python{sys.version_info.major}{sys.version_info.minor}"
+                appdata_scripts = Path(appdata) / "Python" / py_ver / "Scripts" / "yt-dlp.exe"
+                if appdata_scripts.exists():
+                    base = [str(appdata_scripts)]
+            if not base:
+                base = [sys.executable, "-m", "yt_dlp"]
+    return base + ["--ffmpeg-location", ffmpeg_dir]
 
+
+
+def _parse_seconds(val: float | str) -> float:
+    """Parse float seconds or MM:SS / HH:MM:SS timestamp strings."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    s_val = str(val).strip()
+    if ":" in s_val:
+        parts = s_val.split(":")
+        if len(parts) == 2:
+            return float(parts[0]) * 60.0 + float(parts[1])
+        if len(parts) == 3:
+            return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+    return float(s_val)
 
 
 # ── MusicPlayer ─────────────────────────────────────────────────────────────
@@ -256,6 +286,8 @@ class MusicPlayer:
         self._pause_event = threading.Event()
         self._pause_event.set()
         self._music_interrupted = threading.Event()
+        self._seek_stream_sec: float | None = None
+        self._active_stream_accumulated: list[np.ndarray] = []
         self._lock = threading.RLock()
         self._state_callbacks: list[Callable] = []
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -347,20 +379,68 @@ class MusicPlayer:
             self._music_interrupted.set()
             return "Going back..."
 
-    def seek(self, position_sec: float) -> str:
-        """Jump to a position in the current song."""
+    def seek(self, position_sec: float | str) -> str:
+        """Jump to a position (seconds or MM:SS) in the current song, supporting both cached and live streaming modes."""
+        try:
+            sec = _parse_seconds(position_sec)
+        except (ValueError, TypeError):
+            return f"Invalid position format: '{position_sec}'"
+
+        sec = max(0.0, sec)
+        m, s = int(sec // 60), int(sec % 60)
+        time_str = f"{m}:{s:02d}"
+
         with self._lock:
             if self._current_index >= len(self._queue):
-
                 return "No song playing."
             entry = self._queue[self._current_index]
-            if entry.samples is None or entry.sample_rate <= 0:
-                return "Cannot seek — song not fully loaded yet."
-            max_frames = len(entry.samples)
-            target = int(position_sec * entry.sample_rate)
-            self._playhead_frames = max(0, min(target, max_frames - 1))
+
+            # Mode 1: Fully decoded or cached track
+            if entry.samples is not None and entry.sample_rate > 0:
+                max_frames = len(entry.samples)
+                target = int(sec * entry.sample_rate)
+                self._playhead_frames = max(0, min(target, max_frames - 1))
+                self._music_interrupted.set()
+                return f"Jumped to {time_str}."
+
+            # Mode 2: Live streaming track — check if target is within already buffered stream PCM
+            buffered_frames = sum(len(c) for c in self._active_stream_accumulated)
+            buffered_sec = buffered_frames / 44100.0 if buffered_frames > 0 else 0.0
+
+            if sec <= buffered_sec and buffered_frames > 0:
+                # Seek within already buffered stream audio
+                entry.samples = np.concatenate(self._active_stream_accumulated)
+                entry.sample_rate = 44100
+                max_frames = len(entry.samples)
+                target = int(sec * 44100)
+                self._playhead_frames = max(0, min(target, max_frames - 1))
+                self._music_interrupted.set()
+                return f"Jumped to {time_str}."
+
+            # Mode 3: Seek beyond currently buffered stream -> seek via ffmpeg timestamp
+            self._seek_stream_sec = sec
+            self._playhead_frames = int(sec * 44100)
             self._music_interrupted.set()
-            return f"Jumped to {position_sec:.0f}s."
+
+            # Respawn stream process starting at target timestamp if title exists
+            if entry.title:
+                cmd = _ytdlp_cmd() + [
+                    "-f", "ba", "-o", "-",
+                    f"ytsearch1:{entry.title}",
+                    "--no-playlist", "--restrict-filenames",
+                ]
+                with contextlib.suppress(Exception):
+                    if entry.stream_proc is not None:
+                        entry.stream_proc.kill()
+                try:
+                    entry.stream_proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        bufsize=2**20,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to respawn stream proc for seek: %s", e)
+
+            return f"Seeking live stream to {time_str}..."
 
     def set_volume(self, level: float | str) -> str:
         try:
@@ -678,7 +758,13 @@ class MusicPlayer:
 
                 # Stream mode — pass entry to cache PCM on completion
                 if entry.stream_proc is not None:
-                    result = self._stream_from_proc(entry.stream_proc, entry)
+                    start_sec = 0.0
+                    with self._lock:
+                        if self._seek_stream_sec is not None:
+                            start_sec = self._seek_stream_sec
+                            self._seek_stream_sec = None
+
+                    result = self._stream_from_proc(entry.stream_proc, entry, start_sec=start_sec)
                     if result is False:
                         # Adaptive streaming fell back to download — kill stream
                         # proc and re-resolve via download
@@ -827,7 +913,7 @@ class MusicPlayer:
                     off = end
                     self._playhead_frames = off
 
-    def _stream_from_proc(self, proc: subprocess.Popen, entry: SongEntry | None = None):
+    def _stream_from_proc(self, proc: subprocess.Popen, entry: SongEntry | None = None, start_sec: float = 0.0):
         """Stream and play audio from a yt-dlp pipe via ffmpeg → raw PCM → sounddevice.
 
         Uses a persistent ``sd.OutputStream`` to avoid the open/close glitching
@@ -840,14 +926,22 @@ class MusicPlayer:
         # pyrefly: ignore [missing-import]
         import sounddevice as sd
         accumulated: list[np.ndarray] = []
+        with self._lock:
+            self._active_stream_accumulated = accumulated
+
         monitor = NetworkMonitor()
         monitor.start()
         fallback = False
 
         try:
             # Pipe yt-dlp output through ffmpeg → raw mono PCM
+            ffmpeg_cmd = [_ffmpeg_path()]
+            if start_sec > 0:
+                ffmpeg_cmd.extend(["-ss", f"{start_sec:.2f}"])
+            ffmpeg_cmd.extend(["-i", "-", "-f", "s16le", "-ac", "1", "-ar", "44100", "-"])
+
             ffmpeg_proc = subprocess.Popen(
-                [_ffmpeg_path(), "-i", "-", "-f", "s16le", "-ac", "1", "-ar", "44100", "-"],
+                ffmpeg_cmd,
                 stdin=proc.stdout, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
@@ -929,6 +1023,8 @@ class MusicPlayer:
         except Exception as e:
             logger.error("Stream decode error: %s", e)
         finally:
+            with self._lock:
+                self._active_stream_accumulated = []
             with contextlib.suppress(Exception):
                 proc.kill()
             with contextlib.suppress(Exception):

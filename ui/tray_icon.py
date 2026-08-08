@@ -47,6 +47,7 @@ class RaphaelTrayIcon(QSystemTrayIcon):
     toggle_tts_requested = pyqtSignal()
     take_screenshot_requested = pyqtSignal()
     open_music_requested = pyqtSignal()
+    open_playground_requested = pyqtSignal()
     open_settings_requested = pyqtSignal()
     exit_requested = pyqtSignal()
 
@@ -112,6 +113,10 @@ class RaphaelTrayIcon(QSystemTrayIcon):
         self._act_music.triggered.connect(self.open_music_requested.emit)
         self._menu.addAction(self._act_music)
 
+        self._act_playground = QAction("🎨 Raphael Playground", self)
+        self._act_playground.triggered.connect(self.open_playground_requested.emit)
+        self._menu.addAction(self._act_playground)
+
         self._menu.addSeparator()
 
         self._act_settings = QAction("⚙️ Settings", self)
@@ -123,6 +128,17 @@ class RaphaelTrayIcon(QSystemTrayIcon):
         self._act_exit = QAction("❌ Exit Raphael", self)
         self._act_exit.triggered.connect(self.exit_requested.emit)
         self._menu.addAction(self._act_exit)
+
+    def set_audio_input_available(self, available: bool):
+        """Update system tray menu when microphone is unavailable."""
+        if not available:
+            self._act_mute.setText("🎙️ Mic Unavailable (Chat Mode)")
+            self._act_mute.setToolTip("No microphone detected — chat-only mode active")
+            self._act_mute.setEnabled(False)
+        else:
+            self._act_mute.setText("🎤 Toggle Mute")
+            self._act_mute.setToolTip("")
+            self._act_mute.setEnabled(True)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason):
         """Handle mouse click / double click on tray icon."""

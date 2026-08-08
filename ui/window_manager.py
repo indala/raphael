@@ -151,7 +151,7 @@ class ContentWindow(QWidget):
         self.resize(520, 400)
 
         # Drag / maximize state
-        self._drag_pos = None
+        self._drag_offset = None
         self._saved_geometry: QRect | None = None
 
         # Edge-resize state
@@ -593,7 +593,7 @@ class ContentWindow(QWidget):
                 self._resize_start_geo = self.geometry()
                 event.accept()
                 return
-            self._drag_pos = pos - self.frameGeometry().topLeft()
+            self._drag_offset = event.globalPosition().toPoint() - self.pos()
             event.accept()
 
     def mouseMoveEvent(self, event):
@@ -637,7 +637,7 @@ class ContentWindow(QWidget):
             return
 
         # Update cursor when hovering near edges (not dragging)
-        if self._drag_pos is None:
+        if self._drag_offset is None:
             edge = self._detect_resize_edge(event.position().toPoint())
             self.setCursor(self._edge_cursor(edge))
             if edge != 0:
@@ -645,13 +645,13 @@ class ContentWindow(QWidget):
                 return
 
         # Drag mode
-        if self._drag_pos is not None:
-            new_pos = global_pos - self._drag_pos
+        if self._drag_offset is not None:
+            new_pos = global_pos - self._drag_offset
             self._apply_edge_snap(new_pos)
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        self._drag_pos = None
+        self._drag_offset = None
         self._resizing = False
         self._resize_edge = 0
         self._resize_start_pos = None
@@ -676,14 +676,25 @@ class PopupWindowManager:
                 w.show()
                 w.raise_()
                 w.activateWindow()
+                w._resize_to_content()
                 return w
 
         win = ContentWindow(title=title)
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            offset = (len(self._windows) % 5) * 24
+            x = geo.center().x() - 260 + offset
+            y = geo.center().y() - 200 + offset
+            win.move(x, y)
+
         win.set_content(text)
         win.close_requested.connect(lambda k=key: self._remove(k))
         self._windows[key] = win
         win.show()
         win.raise_()
+        win.activateWindow()
+        win._resize_to_content()
         return win
 
     def show_music(self):
@@ -703,6 +714,33 @@ class PopupWindowManager:
         self._windows[key] = win
         win.show()
         win.raise_()
+        return win
+
+    def show_playground(self):
+        """Show (or raise) the Raphael Playground Studio window."""
+        from ui.playground_window import PlaygroundWindow
+
+        key = "__playground__"
+        if key in self._windows:
+            w = self._windows[key]
+            if isinstance(w, PlaygroundWindow):
+                w.show()
+                w.raise_()
+                w.activateWindow()
+                return w
+
+        win = PlaygroundWindow(parent=None)
+        win.close_requested.connect(lambda: self._remove(key))
+        self._windows[key] = win
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            x = geo.center().x() - 400
+            y = geo.center().y() - 280
+            win.move(x, y)
+        win.show()
+        win.raise_()
+        win.activateWindow()
         return win
 
     def close_all(self):

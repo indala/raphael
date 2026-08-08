@@ -18,7 +18,7 @@ from orchestrator.core import ToolExecutor
 def test_tool_executor_has_correct_number():
     """ToolExecutor should have all tools registered."""
     executor = ToolExecutor()
-    assert len(executor.tool_map) == 166
+    assert len(executor.tool_map) == 173
 
 
 def test_tool_executor_has_expected_tools():
@@ -129,6 +129,11 @@ def test_tool_executor_has_expected_tools():
         # Phase D: keyboard state + DPI/brightness
         "key_is_pressed", "caps_lock_state", "num_lock_state",
         "monitor_get_dpi", "get_brightness", "set_brightness",
+        # Raphael UI Presentation State
+        "get_raphael_ui_state", "show_raphael_window", "hide_raphael_window",
+        # Raphael Playground Tools
+        "render_playground_chart", "render_playground_diagram",
+        "render_playground_html", "clear_playground",
     }
     missing = expected - set(executor.tool_map.keys())
     extra = set(executor.tool_map.keys()) - expected

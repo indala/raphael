@@ -536,8 +536,8 @@ def previous_song() -> str:
     return str(_player().previous())
 
 
-def seek_music(position_seconds: int) -> str:
-    return str(_player().seek(float(position_seconds)))
+def seek_music(position_seconds: str | float | int) -> str:
+    return str(_player().seek(position_seconds))
 
 
 def set_music_volume(level: float) -> str:

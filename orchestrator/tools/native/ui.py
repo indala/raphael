@@ -361,6 +361,39 @@ def get_schemas() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "get_raphael_ui_state",
+                "description": "Check Raphael's current UI presentation state — returns 'window' (main HUD window visible) or 'floating_icon' (minimized to floating minion icon).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "show_raphael_window",
+                "description": "Show Raphael's main HUD window and switch UI presentation state to 'window'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "hide_raphael_window",
+                "description": "Hide Raphael's main HUD window to floating minion icon mode and switch UI presentation state to 'floating_icon'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "ui_get_window_rect",
                 "description": "Get a window's current on-screen position and size as left, top, right, bottom pixel coordinates. Provide a partial window title. Useful for computing click targets or verifying window layout.",
                 "parameters": {
@@ -1103,3 +1136,33 @@ def set_brightness(level: int) -> str:
     if "error" in result:
         return f"Failed to set brightness: {result['error']}"
     return f"Brightness set to {level}%."
+
+
+def get_raphael_ui_state() -> str:
+    """Check Raphael's current UI presentation state ('window' or 'floating_icon')."""
+    from controller.raphael_controller import get_controller_instance
+    ctrl = get_controller_instance()
+    if ctrl is not None:
+        state_mode = ctrl.get_ui_state()
+        return f"Raphael UI is currently in '{state_mode}' state."
+    return "Raphael UI is in 'window' state."
+
+
+def show_raphael_window() -> str:
+    """Show Raphael's main HUD window."""
+    from controller.raphael_controller import get_controller_instance
+    ctrl = get_controller_instance()
+    if ctrl is not None:
+        ctrl.show_main_window()
+        return "Raphael main HUD window is now visible (WINDOW state)."
+    return "Raphael controller not running."
+
+
+def hide_raphael_window() -> str:
+    """Hide Raphael's main HUD window to floating minion icon mode."""
+    from controller.raphael_controller import get_controller_instance
+    ctrl = get_controller_instance()
+    if ctrl is not None:
+        ctrl.hide_main_window()
+        return "Raphael main HUD window hidden (FLOATING_ICON state)."
+    return "Raphael controller not running."

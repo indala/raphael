@@ -92,6 +92,24 @@ class AudioWaveformWidget(QWidget):
             painter.drawRoundedRect(x, y, bar_w, bh, 2, 2)
 
 
+class HoverSeekSlider(QSlider):
+    """QSlider with dynamic hover timestamp tooltip preview."""
+
+    def __init__(self, orientation, duration_getter, parent=None):
+        super().__init__(orientation, parent)
+        self.duration_getter = duration_getter
+        self.setMouseTracking(True)
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        dur = self.duration_getter()
+        if dur > 0 and self.width() > 0:
+            pos_ratio = max(0.0, min(1.0, event.position().x() / self.width()))
+            target_sec = int(pos_ratio * dur)
+            m, s = divmod(target_sec, 60)
+            self.setToolTip(f"Seek to {m}:{s:02d}")
+
+
 # ── Standalone Spotify Music Window ───────────────────────────────────────────
 
 
@@ -145,17 +163,20 @@ class SpotifyMusicWindow(QMainWindow):
                 background-color: #181818;
                 border: 1px solid #282828;
                 border-radius: 8px;
-                gridline-color: #282828;
+                gridline-color: transparent;
                 selection-background-color: #282828;
                 font-size: 13px;
+                outline: 0;
             }
             QTableWidget::item {
-                padding: 6px;
+                padding: 6px 10px;
                 color: #cccccc;
+                border-bottom: 1px solid #222222;
             }
             QTableWidget::item:selected {
                 color: #1db954;
                 font-weight: bold;
+                background-color: #242424;
             }
             QHeaderView::section {
                 background-color: #121212;
@@ -165,7 +186,7 @@ class SpotifyMusicWindow(QMainWindow):
                 text-transform: uppercase;
                 border: none;
                 border-bottom: 1px solid #282828;
-                padding: 6px;
+                padding: 8px 10px;
             }
             QLineEdit {
                 background-color: #242424;
@@ -361,12 +382,15 @@ class SpotifyMusicWindow(QMainWindow):
         # Results Table
         self._search_table = QTableWidget(0, 4)
         self._search_table.setHorizontalHeaderLabels(["Title", "Artist", "Duration", "Actions"])
+        self._search_table.verticalHeader().setVisible(False)
+        self._search_table.verticalHeader().setDefaultSectionSize(42)
         self._search_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._search_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self._search_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self._search_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self._search_table.setColumnWidth(2, 80)
-        self._search_table.setColumnWidth(3, 160)
+        self._search_table.setColumnWidth(1, 140)
+        self._search_table.setColumnWidth(2, 90)
+        self._search_table.setColumnWidth(3, 110)
         layout.addWidget(self._search_table)
 
         return page
@@ -392,12 +416,14 @@ class SpotifyMusicWindow(QMainWindow):
 
         self._library_table = QTableWidget(0, 4)
         self._library_table.setHorizontalHeaderLabels(["Song Title", "File Name", "Size", "Actions"])
+        self._library_table.verticalHeader().setVisible(False)
+        self._library_table.verticalHeader().setDefaultSectionSize(42)
         self._library_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._library_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._library_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self._library_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self._library_table.setColumnWidth(2, 90)
-        self._library_table.setColumnWidth(3, 140)
+        self._library_table.setColumnWidth(3, 110)
         layout.addWidget(self._library_table)
 
         return page
@@ -436,10 +462,12 @@ class SpotifyMusicWindow(QMainWindow):
 
         self._liked_table = QTableWidget(0, 3)
         self._liked_table.setHorizontalHeaderLabels(["Title", "Artist", "Actions"])
+        self._liked_table.verticalHeader().setVisible(False)
+        self._liked_table.verticalHeader().setDefaultSectionSize(42)
         self._liked_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._liked_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._liked_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._liked_table.setColumnWidth(2, 140)
+        self._liked_table.setColumnWidth(2, 110)
         layout.addWidget(self._liked_table)
 
         return page
@@ -477,11 +505,13 @@ class SpotifyMusicWindow(QMainWindow):
 
         self._playlists_table = QTableWidget(0, 3)
         self._playlists_table.setHorizontalHeaderLabels(["Playlist Name", "Songs Count", "Actions"])
+        self._playlists_table.verticalHeader().setVisible(False)
+        self._playlists_table.verticalHeader().setDefaultSectionSize(42)
         self._playlists_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._playlists_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._playlists_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self._playlists_table.setColumnWidth(1, 120)
-        self._playlists_table.setColumnWidth(2, 220)
+        self._playlists_table.setColumnWidth(2, 180)
         layout.addWidget(self._playlists_table)
 
         return page
@@ -498,10 +528,12 @@ class SpotifyMusicWindow(QMainWindow):
 
         self._history_table = QTableWidget(0, 3)
         self._history_table.setHorizontalHeaderLabels(["Title", "Artist", "Actions"])
+        self._history_table.verticalHeader().setVisible(False)
+        self._history_table.verticalHeader().setDefaultSectionSize(42)
         self._history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._history_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._history_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._history_table.setColumnWidth(2, 100)
+        self._history_table.setColumnWidth(2, 110)
         layout.addWidget(self._history_table)
 
         return page
@@ -595,7 +627,10 @@ class SpotifyMusicWindow(QMainWindow):
         self._time_pos_lbl.setStyleSheet("color: #b3b3b3; font-size: 10px; font-family: monospace;")
         seek_box.addWidget(self._time_pos_lbl)
 
-        self._seek_slider = QSlider(Qt.Orientation.Horizontal)
+        self._seek_slider = HoverSeekSlider(
+            Qt.Orientation.Horizontal,
+            lambda: float(self._current_track_info.get("duration", 0) or 0)
+        )
         self._seek_slider.setRange(0, 1000)
         self._seek_slider.setValue(0)
         self._seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -859,19 +894,22 @@ class SpotifyMusicWindow(QMainWindow):
         QApplication.processEvents()
 
         try:
-            from orchestrator.tools.native.music_player_tools import search_online
-            res_text = search_online(query, max_results=8)
+            results = self._player.search_online(query, max_results=8)
+            if not results:
+                self._search_status_lbl.setText(f"No results found for '{query}'.")
+                return
 
             self._search_status_lbl.setText(f"Top YouTube results for '{query}':")
-            lines = [line.strip() for line in res_text.splitlines() if line.strip() and "." in line[:3]]
-            self._search_table.setRowCount(len(lines))
+            self._search_table.setRowCount(len(results))
 
-            for row, line in enumerate(lines):
-                title = line.split(".", 1)[-1].strip()
+            for row, r in enumerate(results):
+                title = r.get("title", "Unknown")
+                dur_sec = r.get("duration", 0)
+                dur_str = f"{dur_sec // 60}:{dur_sec % 60:02d}" if dur_sec else "Stream"
 
                 item_title = QTableWidgetItem(title)
                 item_artist = QTableWidgetItem("YouTube Stream")
-                item_dur = QTableWidgetItem("Stream")
+                item_dur = QTableWidgetItem(dur_str)
 
                 self._search_table.setItem(row, 0, item_title)
                 self._search_table.setItem(row, 1, item_artist)
@@ -879,20 +917,23 @@ class SpotifyMusicWindow(QMainWindow):
 
                 act_widget = QWidget()
                 act_layout = QHBoxLayout(act_widget)
-                act_layout.setContentsMargins(0, 0, 0, 0)
-                act_layout.setSpacing(4)
+                act_layout.setContentsMargins(4, 0, 4, 0)
+                act_layout.setSpacing(6)
+                act_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 play_b = QPushButton("▶")
-                play_b.setFixedSize(24, 24)
+                play_b.setFixedSize(26, 26)
                 play_b.setCursor(Qt.CursorShape.PointingHandCursor)
-                play_b.setStyleSheet("background-color: #1db954; color: #000; font-weight: bold; border-radius: 12px; border: none;")
+                play_b.setToolTip("Play track")
+                play_b.setStyleSheet("background-color: #1db954; color: #000; font-weight: bold; border-radius: 13px; border: none;")
                 play_b.clicked.connect(partial(self._play_online_track, title))
                 act_layout.addWidget(play_b)
 
                 like_b = QPushButton("❤️")
-                like_b.setFixedSize(24, 24)
+                like_b.setFixedSize(26, 26)
                 like_b.setCursor(Qt.CursorShape.PointingHandCursor)
-                like_b.setStyleSheet("background-color: #282828; color: #ff3366; border-radius: 12px; border: none;")
+                like_b.setToolTip("Add to Liked Songs")
+                like_b.setStyleSheet("background-color: #282828; color: #ff3366; border-radius: 13px; border: none;")
                 like_b.clicked.connect(partial(self._like_track_dict, {"title": title, "artist": "YouTube Stream"}))
                 act_layout.addWidget(like_b)
 
@@ -935,8 +976,9 @@ class SpotifyMusicWindow(QMainWindow):
 
                 act_widget = QWidget()
                 act_layout = QHBoxLayout(act_widget)
-                act_layout.setContentsMargins(0, 0, 0, 0)
+                act_layout.setContentsMargins(4, 0, 4, 0)
                 act_layout.setSpacing(4)
+                act_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 play_b = QPushButton("▶ Play")
                 play_b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -969,8 +1011,9 @@ class SpotifyMusicWindow(QMainWindow):
 
                 act_widget = QWidget()
                 act_layout = QHBoxLayout(act_widget)
-                act_layout.setContentsMargins(0, 0, 0, 0)
+                act_layout.setContentsMargins(4, 0, 4, 0)
                 act_layout.setSpacing(4)
+                act_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 play_b = QPushButton("▶ Play")
                 play_b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1015,8 +1058,9 @@ class SpotifyMusicWindow(QMainWindow):
 
                 act_widget = QWidget()
                 act_layout = QHBoxLayout(act_widget)
-                act_layout.setContentsMargins(0, 0, 0, 0)
+                act_layout.setContentsMargins(4, 0, 4, 0)
                 act_layout.setSpacing(4)
+                act_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 play_b = QPushButton("▶ Play")
                 play_b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1081,3 +1125,15 @@ class SpotifyMusicWindow(QMainWindow):
                 self._history_table.setCellWidget(row, 2, play_b)
         except Exception as e:
             logger.warning("Failed to load history: %s", e)
+
+    def wheelEvent(self, event):
+        """Scroll wheel over music window smoothly adjusts volume (+/- 5%)."""
+        delta = event.angleDelta().y()
+        if delta != 0:
+            current_vol = self._vol_slider.value()
+            step = 5 if delta > 0 else -5
+            new_vol = max(0, min(100, current_vol + step))
+            if new_vol != current_vol:
+                self._vol_slider.setValue(new_vol)
+                self._on_vol_changed(new_vol)
+        super().wheelEvent(event)

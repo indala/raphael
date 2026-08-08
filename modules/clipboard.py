@@ -41,7 +41,7 @@ def paste_text() -> str:
     if _CS_CLIP:
         try:
             result = CsClip.GetText()
-            if result is not None:
+            if result:
                 return result
         except Exception:
             pass

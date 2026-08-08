@@ -89,6 +89,10 @@ from .native import upstox as _mod_upstox
 
 _register(_mod_upstox)
 
+from .native import playground_tools as _mod_playground
+
+_register(_mod_playground)
+
 from .native import goals as _mod_goals
 
 _register(_mod_goals)

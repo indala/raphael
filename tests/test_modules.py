@@ -116,3 +116,30 @@ def test_browser_control_parameters(mock_registry):
     )
 
 
+def test_parse_seconds_and_seek_streaming():
+    """Test timestamp string parsing and streaming seek functionality."""
+    from audio.music_player import MusicPlayer, SongEntry, _parse_seconds
+
+    assert _parse_seconds(90) == 90.0
+    assert _parse_seconds("90") == 90.0
+    assert _parse_seconds("1:30") == 90.0
+    assert _parse_seconds("01:30") == 90.0
+    assert _parse_seconds("1:01:30") == 3690.0
+
+    player = MusicPlayer.get_instance()
+    entry = SongEntry(title="Test Live Stream", artist="Artist")
+    player._queue = [entry]
+    player._current_index = 0
+
+    # Seeking live stream before buffering completes
+    with patch("subprocess.Popen") as mock_popen:
+        mock_proc = MagicMock()
+        mock_popen.return_value = mock_proc
+
+        res = player.seek("1:30")
+        assert "Seeking live stream to 1:30" in res
+        assert player._seek_stream_sec == 90.0
+        assert player._music_interrupted.is_set()
+
+
+
