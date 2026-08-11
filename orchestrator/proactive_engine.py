@@ -1,5 +1,5 @@
 """
-Proactive Engine — idle-time check-in system for Raphael.
+Proactive Engine - idle-time check-in system for Raphael.
 
 Enhanced version with topic monitoring, DDG news checking, and event watching.
 Architecture inspired by Mark-XLVII's background monitor pattern.
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Module-level import so it is patchable in tests and avoids re-importing per call.
 # Guarded: environments without the package get None (topic monitoring disabled).
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:  # pragma: no cover - depends on optional dependency
     DDGS = None  # type: ignore[assignment]
 
@@ -38,8 +38,7 @@ PROACTIVE_SYSTEM_INSTRUCTION = (
     "Do NOT use any tools. This is a READ-ONLY check. "
     "Topics: idle reminders, system alerts, time-based suggestions."
 )
-
-# ── Blocked categories (never monitor regardless of what user says) ────────────
+# Blocked categories (never monitor regardless of what user says)
 
 _BLOCKED_CATEGORIES = {
     # Cryptocurrency / blockchain (various languages)
@@ -60,7 +59,7 @@ def _is_blocked(topic: str) -> bool:
     return any(word in t for word in _BLOCKED_CATEGORIES)
 
 
-# ── Slug / hash helpers ────────────────────────────────────────────────────────
+# Slug / hash helpers
 
 def _slug(topic: str) -> str:
     """Convert topic to safe filesystem slug."""
@@ -72,12 +71,12 @@ def _title_hash(title: str) -> str:
     return hashlib.md5(title.encode("utf-8", errors="ignore")).hexdigest()[:12]
 
 
-# ── Topic Monitor ──────────────────────────────────────────────────────────────
+# Topic Monitor
 
 class TopicMonitor:
     """
     DDG news checking with hash-based change detection.
-    
+
     Pattern from Mark-XLVII/actions/background_monitor.py:
     - Check each topic once per day
     - Hash-based change detection (only alert on new headlines)
@@ -100,7 +99,7 @@ class TopicMonitor:
         if not self.storage_path.exists():
             self._monitors = {}
             return
-        
+
         try:
             data = json.loads(self.storage_path.read_text(encoding="utf-8"))
             self._monitors = data if isinstance(data, dict) else {}
@@ -123,21 +122,21 @@ class TopicMonitor:
 
     def add_topic(self, topic: str) -> str:
         """Add a topic to monitor.
-        
+
         Returns:
             Success/error message
         """
         topic = topic.strip()
         if not topic:
             return "Please specify a topic to monitor."
-        
+
         if _is_blocked(topic):
             return "I don't monitor crypto, finance, or spam topics."
-        
+
         slug = _slug(topic)
         if slug in self._monitors:
             return f"Already monitoring: {self._monitors[slug]['topic']}"
-        
+
         self._monitors[slug] = {
             "topic": topic,
             "added": datetime.now().strftime("%Y-%m-%d"),
@@ -150,12 +149,12 @@ class TopicMonitor:
 
     def remove_topic(self, topic: str) -> str:
         """Remove a topic from monitoring.
-        
+
         Returns:
             Success/error message
         """
         topic_lower = topic.strip().lower()
-        
+
         # Exact slug match first
         slug = _slug(topic)
         if slug in self._monitors:
@@ -163,7 +162,7 @@ class TopicMonitor:
             self._save()
             logger.info("Removed topic monitor: %s", label)
             return f"Stopped monitoring: {label}"
-        
+
         # Partial match fallback
         for key, val in list(self._monitors.items()):
             if topic_lower in val.get("topic", "").lower():
@@ -171,7 +170,7 @@ class TopicMonitor:
                 self._save()
                 logger.info("Removed topic monitor: %s", label)
                 return f"Stopped monitoring: {label}"
-        
+
         return f"Not found in monitored topics: {topic}"
 
     def list_topics(self) -> list[str]:
@@ -181,7 +180,7 @@ class TopicMonitor:
     def check_all(self) -> list[str]:
         """
         Run all pending topic checks (once per day per topic).
-        
+
         Returns:
             List of [MONITOR_ALERT] strings (empty if nothing new)
         """
@@ -189,7 +188,7 @@ class TopicMonitor:
             return []
 
         if DDGS is None:
-            logger.warning("duckduckgo_search not installed, topic monitoring disabled")
+            logger.warning("ddgs not installed, topic monitoring disabled")
             return []
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -206,7 +205,7 @@ class TopicMonitor:
                 # DDG news search (max 5 results)
                 with DDGS() as ddgs:
                     results = list(ddgs.news(topic, max_results=5))
-                
+
                 if not results:
                     self._monitors[slug]["last_check"] = today
                     changed = True
@@ -222,9 +221,8 @@ class TopicMonitor:
                 h = _title_hash(title)
                 self._monitors[slug]["last_check"] = today
                 changed = True
-
                 if h == data.get("last_hash"):
-                    # Same headline as last check — no alert
+                    # Same headline as last check - no alert
                     continue
 
                 # New headline detected
@@ -234,7 +232,7 @@ class TopicMonitor:
                 snippet = top.get("body", "")[:150]
                 source = top.get("source", "")
                 date = top.get("date", "")
-                
+
                 parts = [f"[MONITOR_ALERT] {topic}", f"Headline: {title}"]
                 if snippet:
                     parts.append(f"Summary: {snippet}")
@@ -242,7 +240,7 @@ class TopicMonitor:
                     parts.append(f"Source: {source}")
                 if date:
                     parts.append(f"Date: {date}")
-                
+
                 alert = "\n".join(parts)
                 alerts.append(alert)
                 logger.info("New headline for '%s': %s", topic, title[:60])
@@ -259,12 +257,12 @@ class TopicMonitor:
         return alerts
 
 
-# ── Event Watcher ──────────────────────────────────────────────────────────────
+# Event Watcher
 
 class EventWatcher:
     """
     Time-based reminders and event tracking.
-    
+
     Simple implementation for MVP:
     - Stores reminders with timestamp
     - Checks for due reminders on each proactive check
@@ -285,7 +283,7 @@ class EventWatcher:
         if not self.storage_path.exists():
             self._events = {}
             return
-        
+
         try:
             data = json.loads(self.storage_path.read_text(encoding="utf-8"))
             self._events = data if isinstance(data, dict) else {}
@@ -307,11 +305,11 @@ class EventWatcher:
 
     def add_reminder(self, when: str, message: str) -> str:
         """Add a time-based reminder.
-        
+
         Args:
             when: ISO timestamp or relative time (e.g., "2026-08-07T14:00")
             message: Reminder text
-            
+
         Returns:
             Success/error message
         """
@@ -322,11 +320,11 @@ class EventWatcher:
             else:
                 # Try to parse relative time (simplified)
                 return "Please provide ISO timestamp (YYYY-MM-DDTHH:MM)"
-            
+
             event_id = hashlib.md5(
-                f"{when}{message}".encode("utf-8")
+                f"{when}{message}".encode()
             ).hexdigest()[:12]
-            
+
             self._events[event_id] = {
                 "due_at": due_dt.isoformat(),
                 "message": message,
@@ -336,14 +334,14 @@ class EventWatcher:
             self._save()
             logger.info("Added reminder: %s at %s", message[:30], when)
             return f"Reminder set for {due_dt.strftime('%Y-%m-%d %H:%M')}"
-        
+
         except Exception as e:
             return f"Failed to parse time: {e}"
 
     def check_due(self) -> list[str]:
         """
         Check for due reminders.
-        
+
         Returns:
             List of [REMINDER] alert strings
         """
@@ -354,7 +352,7 @@ class EventWatcher:
         for event_id, data in list(self._events.items()):
             if data.get("fired"):
                 continue
-            
+
             try:
                 due_dt = datetime.fromisoformat(data["due_at"])
                 if due_dt <= now:
@@ -388,12 +386,12 @@ class EventWatcher:
         return upcoming[:limit]
 
 
-# ── Main ProactiveEngine ───────────────────────────────────────────────────────
+# Main ProactiveEngine
 
 class ProactiveEngine:
     """
     Manages proactive check-in timing and integration.
-    
+
     Enhanced with:
     - Topic monitoring (DDG news)
     - Event watching (reminders)
@@ -426,36 +424,35 @@ class ProactiveEngine:
         self._min_interval = min_interval
         self._topics_enabled = topics_enabled
         self._ddg_check_interval = ddg_check_interval_hours * 3600  # Convert to seconds
-        
+
         self._last_check_time = 0.0
         self._last_topic_check_time = 0.0
         self._enabled = True
         self._pending_proactive = False
-        
+
         # Initialize subsystems
         storage_dir.mkdir(parents=True, exist_ok=True)
         self.topic_monitor = TopicMonitor(storage_dir / "proactive_monitors.json")
         self.event_watcher = EventWatcher(storage_dir / "proactive_events.json")
 
-    # ── Public API ─────────────────────────────────────────────────────
-
+    # Public API
     def set_enabled(self, enabled: bool):
         """Enable or disable proactive checks at runtime."""
         self._enabled = enabled
 
     def reset_timer(self):
-        """Called after user interaction — resets the idle counter."""
+        """Called after user interaction - resets the idle counter."""
         self._pending_proactive = False
 
     def check(self) -> bool:
         """
         Called from the main poll loop (every 50ms).
-        
+
         Checks for:
         1. Idle-based proactive check
         2. Topic monitor alerts (daily)
         3. Event reminders (continuous)
-        
+
         Returns:
             True if a proactive check was triggered this cycle.
         """
@@ -507,7 +504,7 @@ class ProactiveEngine:
             return
 
         self._last_topic_check_time = now
-        
+
         try:
             alerts = self.topic_monitor.check_all()
             for alert in alerts:
@@ -532,7 +529,7 @@ class ProactiveEngine:
         """Called after the proactive check result is processed."""
         self._pending_proactive = False
 
-    # ── Topic Monitor Interface ────────────────────────────────────────
+    # Topic Monitor Interface
 
     def add_monitor(self, topic: str) -> str:
         """Add a topic to monitor (proxies to TopicMonitor)."""
@@ -546,7 +543,7 @@ class ProactiveEngine:
         """List all monitored topics."""
         return self.topic_monitor.list_topics()
 
-    # ── Event Watcher Interface ────────────────────────────────────────
+    # Event Watcher Interface
 
     def add_reminder(self, when: str, message: str) -> str:
         """Add a time-based reminder."""

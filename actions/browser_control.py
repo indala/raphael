@@ -5,15 +5,16 @@ Supported browsers (auto-detected on Windows):
   Chrome, Edge, Firefox, Opera, Brave, Vivaldi, Chromium
 """
 
+import contextlib
 import logging
 import os
-import time
-import shutil
 import platform
+import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
-import contextlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -62,8 +63,8 @@ def _find_exe_windows(name: str) -> str | None:
         return exe
 
     # Common install locations
-    pf = os.environ.get("ProgramFiles", "C:\\Program Files")
-    pf_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    pf = os.environ.get("PROGRAMFILES", "C:\\Program Files")
+    pf_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
     local = os.environ.get("LOCALAPPDATA", "")
 
     paths = [
@@ -112,7 +113,7 @@ _BROWSER_SPECS: dict = {
         "engine": "chromium",
         "paths": {
             "Windows": [
-                os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
+                os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"),
                              "Google", "Chrome", "Application", "chrome.exe"),
                 os.path.join(os.environ.get("LOCALAPPDATA", ""),
                              "Google", "Chrome", "Application", "chrome.exe"),
@@ -126,7 +127,7 @@ _BROWSER_SPECS: dict = {
         "engine": "chromium",
         "paths": {
             "Windows": [
-                os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
                              "Microsoft", "Edge", "Application", "msedge.exe"),
             ],
             "Darwin":  ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
@@ -138,9 +139,9 @@ _BROWSER_SPECS: dict = {
         "engine": "firefox",
         "paths": {
             "Windows": [
-                os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
+                os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"),
                              "Mozilla Firefox", "firefox.exe"),
-                os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
                              "Mozilla Firefox", "firefox.exe"),
             ],
             "Darwin":  ["/Applications/Firefox.app/Contents/MacOS/firefox"],
@@ -161,7 +162,7 @@ _BROWSER_SPECS: dict = {
         "engine": "chromium",
         "paths": {
             "Windows": [
-                os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
+                os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"),
                              "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
                 os.path.join(os.environ.get("LOCALAPPDATA", ""),
                              "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
@@ -241,7 +242,8 @@ def _detect_default_browser() -> str:
             # Use C# bridge for registry access when available
             prog_id = None
             try:
-                from hybrid.bridge import CRegistryHelper as CsReg, is_available
+                from hybrid.bridge import CRegistryHelper as CsReg
+                from hybrid.bridge import is_available
                 if is_available():
                     prog_id = CsReg.GetDefaultBrowserProgId()
             except ImportError:
@@ -604,7 +606,7 @@ class _SessionRegistry:
                 if name == browser_name and session.page and not session.page.is_closed():
                     return session
             # Return the first alive session
-            for name, session in self._sessions.items():
+            for _name, session in self._sessions.items():
                 if session.page and not session.page.is_closed():
                     return session
 
