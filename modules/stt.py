@@ -234,7 +234,7 @@ class IsolatedDetector(BaseSpeechDetector):
             if p.strip()
         )
         if not preferred:
-            preferred = ("winrt", "groq")
+            preferred = ("moonshine",)
 
         cfg = IsolatedSTTConfig(preferred_backends=preferred)
         self._runner = IsolatedSTTRunner(cfg)
@@ -270,22 +270,6 @@ class IsolatedDetector(BaseSpeechDetector):
 # Factory — create the right detector based on config
 # ====================================================================
 
-def _winrt_preferred(STTRegistry) -> bool:
-    """True when winrt is explicitly preferred AND usable (streaming-only).
-
-    Returns False if winrt isn't in STT_PREFERRED_BACKENDS or its COM
-    layer can't be loaded — in which case the VAD gate may be used.
-    """
-    preferred = getattr(config, "STT_PREFERRED_BACKENDS", None)
-    if not preferred or "winrt" not in preferred:
-        return False
-    try:
-        winrt = STTRegistry.get("winrt")
-        return bool(winrt and winrt.supports_streaming)
-    except Exception as e:
-        logger.debug("winrt support check failed: %s", e)
-        return False
-
 def create_detector():
     """
     Create an STT detector based on config.
@@ -301,14 +285,8 @@ def create_detector():
 
     # ── VAD gate (Rhasspy-style wake→VAD→ASR) ──
     # Default on: the mic is gated by a voice-activity detector instead of
-    # streaming continuously. Falls back to the classic detectors if the
-    # gate cannot run (no batch STT backend, missing audio layer).
-    #
-    # Exception: when winrt (Windows-native, streaming-only) is explicitly
-    # preferred AND usable, bypass the gate — it structurally excludes winrt
-    # from batch transcription, so honoring stt_preferred_backends means
-    # letting the streaming detectors run (winrt → groq → whisper_local).
-    if getattr(config, "STT_USE_VAD_GATE", True) and not _winrt_preferred(STTRegistry):
+    # streaming continuously.
+    if getattr(config, "STT_USE_VAD_GATE", True):
         try:
             from modules.voice_pipeline import GatedDetector
 

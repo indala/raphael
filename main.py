@@ -193,6 +193,12 @@ def _signal_show_window():
 
 def main():
     """Entry point — launches PyQt6 HUD or MCP server mode."""
+    profile_startup = "--profile-startup" in sys.argv
+    startup_timer = None
+    if profile_startup:
+        from orchestrator.startup_timer import StartupTimer
+        startup_timer = StartupTimer()
+
     if "--install-playwright" in sys.argv:
         sys.exit(_install_playwright_browsers())
 
@@ -205,6 +211,8 @@ def main():
     # RaphaelUI share the same QApplication instance.
     from PyQt6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv)
+    if startup_timer:
+        startup_timer.mark("qt_app_created")
 
     # Single-instance guard — exit if Raphael is already running
     if not _check_single_instance():
@@ -340,6 +348,9 @@ def main():
 
             atexit.register(_cleanup)
             logger.info("[Startup] Deferred initialization complete.")
+            if startup_timer:
+                startup_timer.mark("startup_complete")
+                print(startup_timer.report())
         except Exception as exc:
             logger.exception("[Startup] Deferred initialization FAILED: %s", exc)
             ui.update_splash(0, f"Startup failed: {exc}")

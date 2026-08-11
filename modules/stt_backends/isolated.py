@@ -33,7 +33,7 @@ _HEALTH_PING_TIMEOUT = 3.0   # seconds without ping → assumed dead
 @dataclass
 class IsolatedSTTConfig:
     """Configuration for the isolated STT runner."""
-    preferred_backends: tuple[str, ...] = ("winrt", "groq")
+    preferred_backends: tuple[str, ...] = ("moonshine",)
     restart_attempts: int = _MAX_RESTART_ATTEMPTS
     health_interval: float = _HEALTH_PING_INTERVAL
 
@@ -235,8 +235,17 @@ class IsolatedSTTRunner:
             daemon=True,
             name="stt-isolated",
         )
-        self._process.start()
-        logger.info("STT subprocess started (PID: %s)", self._process.pid)
+        try:
+            self._process.start()
+            logger.info("STT subprocess started (PID: %s)", self._process.pid)
+        except PermissionError as e:
+            logger.warning("STT subprocess permission error (%s) — WinRT/multiprocessing handle duplication restricted on Windows. Falling back to in-process mode.", e)
+            self._running = False
+            return
+        except Exception as e:
+            logger.warning("STT subprocess failed to start (%s)", e)
+            self._running = False
+            return
 
         # Start health + result drain threads
         self._health_thread = threading.Thread(
@@ -328,7 +337,7 @@ class IsolatedSTTRunner:
 
             # Auto-restart if unhealthy
             if missed_pings >= max_missed:
-                logger.warning("STT subprocess unhealthy — restarting")
+                logger.warning("STT subprocess unhealthy — restarting (attempt %d)", self._restart_count + 1)
                 self._restart_count += 1
                 if self._restart_count > self.config.restart_attempts:
                     logger.error("STT subprocess exceeded max restart attempts (%d) — giving up",
@@ -341,6 +350,8 @@ class IsolatedSTTRunner:
                     self._process.join(timeout=2.0)
                 self._process = None
                 self._close_queues()
+                # Exponential backoff delay before respawn
+                time.sleep(min(1.0 * self._restart_count, 8.0))
                 # Start new process
                 self._start_process()
                 missed_pings = 0

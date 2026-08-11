@@ -1,211 +1,129 @@
 """
-Context Compressor — intelligent conversation history summarization.
-
-Pattern from hermes-agent + openclaude: when history exceeds a threshold,
-compress old turns into a summary rather than truncating. Preserves context
-about goals, decisions, and key facts while drastically reducing token count.
-
-Features:
-- Head/tail protection: never compress the N newest turns
-- Smart boundary detection: compress at natural conversation breaks
-- Auto-compaction trigger at configurable percentage of context window
+Structured Context Compressor — JSON-aware tool result truncation.
 """
 
+import json
 import logging
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from orchestrator.core import LLMClient
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
+def compress_tool_result(
+    result: Any,
+    max_str_len: int = 500,
+    max_list_items: int = 10,
+) -> str:
+    """Compress a tool result string or object using structure-preserving truncation.
+
+    If input is JSON or a dict/list, long strings are trimmed and large arrays keep
+    head/tail elements with a clear placeholder notice.
+    If input is raw text, head and tail are preserved.
+    """
+    if result is None:
+        return ""
+
+    if not isinstance(result, str):
+        try:
+            return json.dumps(_compress_obj(result, max_str_len, max_list_items), ensure_ascii=False)
+        except Exception:
+            result = str(result)
+
+    result_str = result.strip()
+    if not result_str:
+        return ""
+
+    # Attempt JSON parsing first
+    try:
+        parsed = json.loads(result_str)
+        compressed = _compress_obj(parsed, max_str_len, max_list_items)
+        return json.dumps(compressed, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Non-JSON plain text fallback: keep head and tail if exceeds 2 * max_str_len
+    if len(result_str) <= max_str_len * 2:
+        return result_str
+
+    truncated_count = len(result_str) - (max_str_len * 2)
+    head = result_str[:max_str_len]
+    tail = result_str[-max_str_len:]
+    return f"{head}\n\n[... truncated {truncated_count} characters ...]\n\n{tail}"
+
+
+def _compress_obj(obj: Any, max_str_len: int, max_list_items: int) -> Any:
+    if isinstance(obj, str):
+        if len(obj) > max_str_len:
+            head = obj[: max_str_len // 2]
+            tail = obj[-max_str_len // 2 :]
+            omitted = len(obj) - max_str_len
+            return f"{head} ... [truncated {omitted} chars] ... {tail}"
+        return obj
+    elif isinstance(obj, list):
+        compressed_list = [_compress_obj(item, max_str_len, max_list_items) for item in obj]
+        if len(compressed_list) > max_list_items:
+            keep_head = max_list_items // 2
+            keep_tail = max_list_items // 2
+            omitted = len(compressed_list) - (keep_head + keep_tail)
+            return (
+                compressed_list[:keep_head]
+                + [f"[... truncated {omitted} items ...]"]
+                + compressed_list[-keep_tail:]
+            )
+        return compressed_list
+    elif isinstance(obj, dict):
+        return {
+            str(k): _compress_obj(v, max_str_len, max_list_items)
+            for k, v in obj.items()
+        }
+    else:
+        return obj
+
+
 class ContextCompressor:
-    """Compresses conversation history to stay within context limits."""
+    """Intelligent context compression for long-running conversations."""
 
     def __init__(
         self,
         threshold_percent: float = 0.8,
         protect_last_n: int = 6,
         protect_first_n: int = 3,
-        min_history_for_compression: int = 20,
+        min_history_for_compression: int = 12,
     ):
-        """Initialize the compressor with thresholds.
-
-        Args:
-            threshold_percent: Trigger compression at this % of max history (0.8 = 80%)
-            protect_last_n: Always preserve the N most recent turns
-            protect_first_n: Always preserve the N oldest turns (context setup)
-            min_history_for_compression: Don't compress unless history exceeds this
-        """
         self.threshold_percent = threshold_percent
         self.protect_last_n = protect_last_n
         self.protect_first_n = protect_first_n
         self.min_history_for_compression = min_history_for_compression
 
-    def should_compress(self, history: list[dict], max_history: int) -> bool:
-        """Check if history should be compressed.
-
-        Returns True if history length exceeds threshold_percent of max_history
-        and has at least min_history_for_compression turns.
-        """
-        if len(history) < self.min_history_for_compression:
-            return False
-        threshold = int(max_history * self.threshold_percent)
-        return len(history) > threshold
-
-    def compress(
-        self, history: list[dict], llm: "LLMClient", max_history: int
-    ) -> list[dict]:
-        """Compress old conversation turns into a summary.
-
-        Preserves:
-        - First N turns (context setup, system messages)
-        - Last N turns (recent conversation)
-
-        Compresses:
-        - Everything in between → single summary message
-
-        Returns the compressed history list.
-        """
-        if not self.should_compress(history, max_history):
-            return history
-
-        # Calculate compression boundary
-        protect_head = min(self.protect_first_n, len(history) // 3)
-        protect_tail = min(self.protect_last_n, len(history) // 3)
-
-        if protect_head + protect_tail >= len(history):
-            # Not enough to compress
-            return history
-
-        head = history[:protect_head]
-        to_compress = history[protect_head : -protect_tail]
-        tail = history[-protect_tail:]
-
-        if not to_compress:
-            return history
-
-        # Build summary prompt from turns to compress
-        compact_text = self._format_for_summary(to_compress)
-
-        try:
-            summary = llm.chat(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a conversation summarizer. Summarize the following "
-                            "conversation history concisely. Focus on:\n"
-                            "- User goals and requests\n"
-                            "- Decisions made\n"
-                            "- Files modified or created\n"
-                            "- Tools used\n"
-                            "- Key facts established\n\n"
-                            "Keep the summary under 250 words. Be specific about what was accomplished."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Summarize this conversation:\n\n{compact_text}",
-                    },
-                ],
-                tools=None,
-                reason="history_compression",
-            )
-            summary_text = summary.content if summary and hasattr(summary, "content") else ""
-            if not summary_text or summary_text.strip().startswith("[Error calling LLM"):
-                raise ValueError("LLM compression failed")
-        except Exception as e:
-            logger.warning("Compression failed: %s — falling back to truncation", e)
-            # Fallback: simple truncation keeping head + tail
-            return head + tail
-
-        # Insert compressed summary between head and tail
-        compressed_message = {
-            "role": "system",
-            "content": f"[Compressed History]: {summary_text[:600]}",
-        }
-
-        compressed_history = head + [compressed_message] + tail
-
-        logger.info(
-            "Compressed history: %d turns → %d turns (saved ~%d turns)",
-            len(history),
-            len(compressed_history),
-            len(to_compress),
-        )
-
-        return compressed_history
-
-    def _format_for_summary(self, turns: list[dict]) -> str:
-        """Format conversation turns for LLM summarization.
-
-        Includes role, content preview, and tool calls.
-        Truncates long content to keep summary prompt manageable.
-        """
-        lines = []
-        for turn in turns:
-            role = turn.get("role", "unknown")
-            content = turn.get("content", "")
-            tool_calls = turn.get("tool_calls", [])
-
-            # Truncate long content
-            if isinstance(content, str) and len(content) > 300:
-                content = content[:300] + "..."
-
-            line = f"[{role}] {content}"
-            lines.append(line)
-
-            # Add tool call info
-            if tool_calls:
-                for tc in tool_calls:
-                    if isinstance(tc, dict):
-                        func_name = tc.get("function", {}).get("name", "?")
-                        lines.append(f"  → tool: {func_name}")
-
-        return "\n".join(lines)
-
-    def prune_tool_results_only(self, history: list[dict], max_chars: int = 5000) -> list[dict]:
-        """Cheap deterministic trim: truncate oversized tool results.
-
-        Pattern from hermes-agent: before expensive LLM compression, try
-        a quick pass that just trims tool results to a reasonable size.
-        This often buys enough space to defer compression.
-
-        Returns modified history (does not mutate original).
-        """
+    def prune_tool_results_only(self, history: list[dict]) -> list[dict]:
+        """Compress oversized tool results in history using structured JSON/text compression."""
         pruned = []
         for turn in history:
-            if turn.get("role") == "tool":
-                content = turn.get("content", "")
-                if isinstance(content, str) and len(content) > max_chars:
-                    pruned_turn = dict(turn)
-                    pruned_turn["content"] = content[:max_chars] + "\n...[truncated]"
-                    pruned.append(pruned_turn)
-                else:
-                    pruned.append(turn)
+            if turn.get("role") == "tool" and "content" in turn:
+                content = str(turn.get("content") or "")
+                new_turn = dict(turn)
+                new_turn["content"] = compress_tool_result(content)
+                pruned.append(new_turn)
             else:
                 pruned.append(turn)
         return pruned
 
+    def should_compress(self, history: list[dict], max_history: int) -> bool:
+        if len(history) < self.min_history_for_compression:
+            return False
+        return len(history) >= int(max_history * self.threshold_percent)
 
-# Global singleton
-_compressor = ContextCompressor()
+    def compress(self, history: list[dict], llm: Any, max_history: int) -> list[dict]:
+        if not self.should_compress(history, max_history):
+            return history
+        if len(history) <= (self.protect_first_n + self.protect_last_n):
+            return history
 
+        head = history[: self.protect_first_n]
+        middle = history[self.protect_first_n : -self.protect_last_n]
+        tail = history[-self.protect_last_n :]
 
-def should_compress(history: list[dict], max_history: int) -> bool:
-    """Check if history should be compressed (global singleton)."""
-    return _compressor.should_compress(history, max_history)
+        summary_text = f"[System Summary: omitted {len(middle)} middle context turns]"
+        summary_turn = {"role": "system", "content": summary_text}
+        return head + [summary_turn] + tail
 
-
-def compress_history(
-    history: list[dict], llm: "LLMClient", max_history: int
-) -> list[dict]:
-    """Compress history (global singleton)."""
-    return _compressor.compress(history, llm, max_history)
-
-
-def prune_tool_results(history: list[dict], max_chars: int = 5000) -> list[dict]:
-    """Prune oversized tool results (global singleton)."""
-    return _compressor.prune_tool_results(history, max_chars)

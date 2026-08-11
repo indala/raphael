@@ -3,8 +3,7 @@
 from . import base
 from . import registry
 from . import cloud
-from . import winrt
-from . import whisper_local
+from . import moonshine
 from . import isolated
 
 # Convenience exports

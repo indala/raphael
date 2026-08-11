@@ -6,142 +6,74 @@ Native tools:  orchestrator/tools/native/  (human-written, never overwritten)
 Generated tools: orchestrator/tools/generated/  (AI-created, can be freely updated)
 """
 
+import contextlib
+import importlib
 import logging
+import os
+import pkgutil
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 _TOOL_MODULES: list = []
 _TOOL_MAP: dict[str, Callable] = {}
+_filtered_schema_cache: dict[tuple[str, ...], list[dict]] = {}
+_tools_initialized: bool = False
+
+_NATIVE_MODULE_NAMES = [
+    "memory", "clipboard", "system", "tts", "chart", "web", "files",
+    "browser", "ui", "screen", "weather", "background_tools", "knowledge",
+    "web_fetch", "delegation", "upstox", "playground_tools", "goals",
+    "music", "music_player_tools", "email", "agent", "desktop", "audio", "power",
+]
 
 
 def _register(module):
     """Register a tool module — collects its schemas and tool functions."""
-    _TOOL_MODULES.append(module)
+    if module not in _TOOL_MODULES:
+        _TOOL_MODULES.append(module)
     for name in dir(module):
         obj = getattr(module, name)
         if callable(obj) and not name.startswith("_"):
             _TOOL_MAP[name] = obj
 
 
-# ── Native Tools (human-written, protected) ──
-from .native import memory as _mod_memory
+def _ensure_tools_loaded():
+    """Lazily import native and generated production tool modules if not already loaded."""
+    global _tools_initialized
+    if _tools_initialized:
+        return
+    _tools_initialized = True
 
-_register(_mod_memory)
+    # ── Native Tools ──
+    for mod_name in _NATIVE_MODULE_NAMES:
+        try:
+            mod = importlib.import_module(f".native.{mod_name}", __name__)
+            globals()[f"_mod_{mod_name}"] = mod
+            _register(mod)
+        except Exception as e:
+            logger.warning("Native tool module '%s' failed to load: %s", mod_name, e)
 
-from .native import clipboard as _mod_clipboard
-
-_register(_mod_clipboard)
-
-from .native import system as _mod_system
-
-_register(_mod_system)
-
-from .native import tts as _mod_tts
-
-_register(_mod_tts)
-
-from .native import chart as _mod_chart
-
-_register(_mod_chart)
-
-from .native import web as _mod_web
-
-_register(_mod_web)
-
-from .native import files as _mod_files
-
-_register(_mod_files)
-
-from .native import browser as _mod_browser
-
-_register(_mod_browser)
-
-from .native import ui as _mod_ui
-
-_register(_mod_ui)
-
-from .native import screen as _mod_screen
-
-_register(_mod_screen)
-
-from .native import weather as _mod_weather
-
-_register(_mod_weather)
-
-from .native import background_tools as _mod_bg
-
-_register(_mod_bg)
-
-from .native import knowledge as _mod_knowledge
-
-_register(_mod_knowledge)
-
-from .native import web_fetch as _mod_web_fetch
-
-_register(_mod_web_fetch)
-
-from .native import delegation as _mod_delegation
-
-_register(_mod_delegation)
-
-from .native import upstox as _mod_upstox
-
-_register(_mod_upstox)
-
-from .native import playground_tools as _mod_playground
-
-_register(_mod_playground)
-
-from .native import goals as _mod_goals
-
-_register(_mod_goals)
-
-from .native import music as _mod_music
-
-_register(_mod_music)
-
-from .native import music_player_tools as _mod_music_player
-
-_register(_mod_music_player)
-
-from .native import email as _mod_email
-
-_register(_mod_email)
-
-from .native import agent as _mod_agent
-
-_register(_mod_agent)
-
-from .native import desktop as _mod_desktop
-
-_register(_mod_desktop)
-
-from .native import audio as _mod_audio
-
-_register(_mod_audio)
-
-from .native import power as _mod_power
-
-_register(_mod_power)
-
-# ── Generated Tools (AI-created, dynamically loaded) ──
-# Production tools are loaded; draft and archived are not (prevents conflicts)
-import contextlib
-import importlib
-import pkgutil
-
-from .generated import production as _gen_prod_pkg
-
-for _importer, _modname, _ispkg in pkgutil.iter_modules(
-    _gen_prod_pkg.__path__, _gen_prod_pkg.__name__ + "."
-):
+    # ── Generated Tools ──
     try:
-        _mod = importlib.import_module(_modname)
-        _register(_mod)
-        logger.debug("Loaded generated tool: %s", _modname)
+        from .generated import production as _gen_prod_pkg
+        for _importer, _modname, _ispkg in pkgutil.iter_modules(
+            _gen_prod_pkg.__path__, _gen_prod_pkg.__name__ + "."
+        ):
+            try:
+                _mod = importlib.import_module(_modname)
+                _register(_mod)
+                logger.debug("Loaded generated tool: %s", _modname)
+            except Exception as e:
+                logger.warning("Generated tool '%s' failed to load: %s", _modname, e)
     except Exception as e:
-        logger.warning("Generated tool '%s' failed to load: %s", _modname, e)
+        logger.warning("Generated production package search failed: %s", e)
+
+
+# Check environment variable escape hatch
+_EAGER_ENV = os.environ.get("RAPHAEL_EAGER_TOOLS", "").strip().lower()
+if _EAGER_ENV in ("1", "true", "yes", "on"):
+    _ensure_tools_loaded()
 
 
 # ── MCP Tool Integration ──
@@ -184,8 +116,6 @@ def reset_mcp_tools():
 
 
 # ── Parallel-safe tools ────────────────────────────────────────────
-# Tools with no side effects can run concurrently when the LLM requests
-# multiple tool calls in one response. Others run sequentially.
 PARALLEL_SAFE_TOOLS: set[str] = {
     "web_search", "web_fetch", "web_fetch_multi",
     "get_weather",
@@ -205,24 +135,8 @@ PARALLEL_SAFE_TOOLS: set[str] = {
 
 
 def normalize_tool_schema(schema: object) -> dict | None:
-    """Normalize a tool schema to the bare function-tool dict form.
-
-    Some modules return schemas already wrapped as OpenAI tool objects:
-      {"type": "function", "function": {"name": ..., ...}}
-    Wrapping those a second time produces a double-nested object whose
-    inner ``function`` dict has no top-level ``name``.  Strict providers
-    (e.g. DeepSeek) reject the *entire* request with HTTP 400
-    ``tools[N].function: missing field name``, silently disabling every
-    tool for the whole turn.
-
-    This helper unwraps already-wrapped schemas and returns ``None`` for
-    anything without a resolvable name so callers can skip-with-warning.
-
-    Adapted from hermes-agent/agent/memory_manager.py (normalize_tool_schema).
-    """
     if not isinstance(schema, dict):
         return None
-    # Unwrap an already-wrapped OpenAI tool entry
     if schema.get("type") == "function" and isinstance(schema.get("function"), dict):
         schema = schema["function"]
         if not isinstance(schema, dict):
@@ -235,16 +149,15 @@ def normalize_tool_schema(schema: object) -> dict | None:
 
 def get_tool_schemas() -> list[dict]:
     """Return aggregated JSON schemas from all tool modules + MCP servers."""
+    _ensure_tools_loaded()
     _load_mcp_tools()
     schemas = list(_mcp_schemas or [])
     for mod in _TOOL_MODULES:
         try:
             raw_schemas = mod.get_schemas()
             for raw in raw_schemas:
-                # Unwrap any double-wrapped schemas before storing
                 func = raw.get("function") if isinstance(raw, dict) else None
                 if func is not None:
-                    # Already in OpenAI tool form — validate inner function dict
                     if normalize_tool_schema(func) is None:
                         logger.warning(
                             "Skipping malformed schema from %s (missing 'name'): %s",
@@ -253,7 +166,6 @@ def get_tool_schemas() -> list[dict]:
                         continue
                     schemas.append(raw)
                 else:
-                    # Bare function schema — wrap it
                     if normalize_tool_schema(raw) is None:
                         logger.warning(
                             "Skipping malformed bare schema from %s: %s",
@@ -262,29 +174,42 @@ def get_tool_schemas() -> list[dict]:
                         continue
                     schemas.append({"type": "function", "function": raw})
         except Exception as e:
-            logger.error("Failed to load schemas from %s: %s", mod.__name__, e)
+            logger.error("Failed to load schemas from %s: %s", getattr(mod, "__name__", str(mod)), e)
     return schemas
 
 
 def get_filtered_schemas(tool_names: list[str]) -> list[dict]:
-    """Return schemas for specific tool names only.
+    """Return schemas for specific tool names only, using a computed cache."""
+    cache_key = tuple(sorted(tool_names))
+    if cache_key in _filtered_schema_cache:
+        return list(_filtered_schema_cache[cache_key])
 
-    Used by agents to present only relevant tools to the LLM,
-    reducing token usage and improving response focus.
-    """
     all_schemas = get_tool_schemas()
     name_set = set(tool_names)
-    return [s for s in all_schemas if s["function"]["name"] in name_set]
+    filtered = [s for s in all_schemas if s["function"]["name"] in name_set]
+    _filtered_schema_cache[cache_key] = filtered
+    return list(filtered)
 
 
 def get_tool_map() -> dict[str, Callable]:
     """Return the complete tool name → function map (native + generated + MCP)."""
+    _ensure_tools_loaded()
     _load_mcp_tools()
     schema_names = {s["function"]["name"] for s in get_tool_schemas()}
     tool_map = {name: func for name, func in _TOOL_MAP.items() if name in schema_names}
     if _mcp_tool_map:
         tool_map.update(_mcp_tool_map)
     return tool_map
+
+
+def invalidate_tool_cache():
+    """Clear schema caches and tool map state."""
+    global _tools_initialized, _filtered_schema_cache, _TOOL_MODULES, _TOOL_MAP
+    _filtered_schema_cache.clear()
+    _TOOL_MODULES.clear()
+    _TOOL_MAP.clear()
+    _tools_initialized = False
+    reset_mcp_tools()
 
 
 def is_generated_tool(name: str) -> bool:
@@ -295,58 +220,30 @@ def is_generated_tool(name: str) -> bool:
 
 
 def reload_tools():
-    """Re-scan native and generated tool directories, re-import all modules.
+    """Re-scan native and generated tool directories, re-import all modules."""
+    invalidate_tool_cache()
+    _ensure_tools_loaded()
 
-    Used by the Tool Manager to pick up dynamically created tool modules.
-    Clears cached modules and re-imports everything.
-    """
-    global _TOOL_MODULES, _TOOL_MAP
-    _TOOL_MODULES = []
-    _TOOL_MAP = {}
-    import importlib
-    import pkgutil
 
-    import orchestrator.tools
-    # Remove cached modules
-    for m in list(orchestrator.tools.__dict__.keys()):
-        if m.startswith("_mod_"):
-            del orchestrator.tools.__dict__[m]
-    # Re-import native modules
-    for _importer, modname, _ispkg in pkgutil.iter_modules(
-        orchestrator.tools.native.__path__, orchestrator.tools.native.__name__ + "."
-    ):
-        try:
-            mod = importlib.import_module(modname)
-            importlib.reload(mod)
-            _TOOL_MODULES.append(mod)
-            for name in dir(mod):
-                obj = getattr(mod, name)
-                if callable(obj) and not name.startswith("_"):
-                    _TOOL_MAP[name] = obj
-        except Exception as e:
-            logger.warning("Tool reload skipped '%s': %s", modname, e)
-    # Re-import generated production modules
-    for _importer, modname, _ispkg in pkgutil.iter_modules(
-        orchestrator.tools.generated.production.__path__,
-        orchestrator.tools.generated.production.__name__ + "."
-    ):
-        try:
-            mod = importlib.import_module(modname)
-            importlib.reload(mod)
-            _TOOL_MODULES.append(mod)
-            for name in dir(mod):
-                obj = getattr(mod, name)
-                if callable(obj) and not name.startswith("_"):
-                    _TOOL_MAP[name] = obj
-        except Exception as e:
-            logger.warning("Generated tool reload skipped '%s': %s", modname, e)
+def __getattr__(name: str):
+    """Module-level attribute lookup to allow accessing loaded tool functions or native module references."""
+    _ensure_tools_loaded()
+    if name.startswith("_mod_"):
+        mod_name = name[5:]
+        if mod_name in _NATIVE_MODULE_NAMES:
+            return importlib.import_module(f".native.{mod_name}", __name__)
+    if name in _TOOL_MAP:
+        return _TOOL_MAP[name]
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 __all__ = [
     "get_filtered_schemas",
     "get_tool_map",
     "get_tool_schemas",
+    "invalidate_tool_cache",
     "is_generated_tool",
     "normalize_tool_schema",
     "reload_tools",
 ]
+

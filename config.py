@@ -53,19 +53,13 @@ TTS_VOLUME = "+0%"
 # ============================================================
 STT_ENABLED = True
 STT_DEVICE_ID = 1
-GROQ_API_KEY = ""
 
-# Backend selection: comma-separated fallback order
-# e.g. "groq,azure" = try Groq first, fall to Azure
-# Cloud STT
-STT_BACKEND = "winrt"
-STT_PREFERRED_BACKENDS = ["winrt", "whisper_local", "groq"]
-STT_WHISPER_LOCAL_MODEL = "base"
-STT_WHISPER_DEVICE = "auto"
+# Backend selection: ordered fallback list (STT_PREFERRED_BACKENDS).
+# Cloud / API STT comes from any endpoint that declares an stt_model.
+STT_BACKEND = "moonshine"
+STT_PREFERRED_BACKENDS = ["moonshine"]
+STT_MOONSHINE_MODEL = "moonshine/tiny"
 
-# Process isolation — on by default for cloud/local backends, but FORCED off
-# for WinRT: WinRT SpeechRecognizer requires the main-process COM apartment +
-# microphone permissions (subprocess breaks speech detection).
 STT_PROCESS_ISOLATION = True
 
 STT_WAKE_WORD_REQUIRED = True
@@ -268,7 +262,7 @@ except Exception:
     pass
 
 # Ensure UPSTOX_API_KEY is synchronized with UPSTOX_ANALYTICS_API
-if UPSTOX_ANALYTICS_API:
+if UPSTOX_ANALYTICS_API != "":
     UPSTOX_API_KEY = UPSTOX_ANALYTICS_API
 
 # Synchronize LLM_BACKEND with primary text priority backend
@@ -279,7 +273,5 @@ if TEXT_PRIORITY:
 if TTS_BACKEND == "edge-tts" and EDGETTS_VOICE:
     TTS_VOICE = EDGETTS_VOICE
 
-# WinRT cannot run under process isolation (main-process COM required) —
-# force isolation off whenever winrt is the active STT backend.
-if STT_BACKEND == "winrt" or (STT_PREFERRED_BACKENDS and STT_PREFERRED_BACKENDS[0] == "winrt"):
-    STT_PROCESS_ISOLATION = False
+# Keep process isolation enabled for isolated STT execution
+STT_PROCESS_ISOLATION = True

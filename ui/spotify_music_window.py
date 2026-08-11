@@ -771,9 +771,9 @@ class SpotifyMusicWindow(QMainWindow):
     def _toggle_repeat(self):
         try:
             modes = [RepeatMode.OFF, RepeatMode.ONE, RepeatMode.ALL]
-            cur = self._player._repeat_mode
+            cur = self._player._repeat
             idx = (modes.index(cur) + 1) % len(modes)
-            self._player.set_repeat_mode(modes[idx])
+            self._player.set_repeat(modes[idx].value)
             self._update_player_deck()
         except Exception:
             pass
@@ -862,7 +862,7 @@ class SpotifyMusicWindow(QMainWindow):
             is_shuff = getattr(self._player, "_shuffle", False)
             self._shuffle_btn.setStyleSheet("color: #1db954; font-size: 12px; border: none; background: transparent;" if is_shuff else "color: #b3b3b3; font-size: 12px; border: none; background: transparent;")
 
-            rep_mode = getattr(self._player, "_repeat_mode", RepeatMode.OFF)
+            rep_mode = getattr(self._player, "_repeat", RepeatMode.OFF)
             if rep_mode == RepeatMode.ONE:
                 self._repeat_btn.setText("🔂")
                 self._repeat_btn.setStyleSheet("color: #1db954; font-size: 12px; border: none; background: transparent;")

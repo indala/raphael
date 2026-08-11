@@ -81,7 +81,7 @@ class STTBackend(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Unique backend identifier (e.g. 'groq', 'openai', 'local')."""
+        """Unique backend identifier (e.g. 'whisper_local', 'winrt', 'cloud')."""
         ...
 
     @property

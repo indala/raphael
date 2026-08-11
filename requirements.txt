@@ -35,7 +35,7 @@ sounddevice>=0.4.6      # Audio playback (PortAudio bindings)
 miniaudio>=1.7.0        # MP3 decoding (edge-tts fallback)
 
 # ── Voice — STT ──────────────────────────────────────────────────────
-faster-whisper>=1.0.0   # Local offline Whisper speech-to-text engine
+useful-moonshine>=0.0.3       # Fast edge/CPU offline speech-to-text engine
 
 # ── Desktop GUI (HUD) ───────────────────────────────────────────────
 PyQt6>=6.7.0            # HUD overlay (main window, canvas, log widget)

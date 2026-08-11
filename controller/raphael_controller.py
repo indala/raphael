@@ -193,6 +193,18 @@ class RaphaelController(QObject):
         try:
             from orchestrator.core import RaphaelOrchestrator
             orch = RaphaelOrchestrator()
+
+            # Pre-warm local Moonshine backend if preferred (eliminates first-call latency)
+            preferred = list(getattr(config, "STT_PREFERRED_BACKENDS", [])) + list(getattr(config, "STT_BATCH_PREFERRED_BACKENDS", []))
+            if getattr(config, "STT_BACKEND", "") == "moonshine" or "moonshine" in preferred:
+                try:
+                    from modules.stt_backends import STTRegistry
+                    moonshine_backend = STTRegistry.get("moonshine")
+                    if moonshine_backend and hasattr(moonshine_backend, "prewarm"):
+                        moonshine_backend.prewarm()
+                except Exception as e:
+                    logger.debug("Moonshine prewarm skip: %s", e)
+
             self.signals.orchestrator_ready.emit(orch)
         except Exception as exc:
             logger.error("Failed to create orchestrator: %s", exc)
@@ -1118,6 +1130,22 @@ class RaphaelController(QObject):
             self._done()
             return
 
+        # Local intent fast path (skip LLM for deterministic intents)
+        try:
+            from orchestrator.local_intents import try_match_intent
+            matched_intent = try_match_intent(text, controller=self)
+            if matched_intent is not None:
+                intent_name, result_text = matched_intent
+                self.ui.write_log("ai", result_text)
+                self.signals.response_received.emit(result_text)
+                self._done()
+                if state.tts_enabled:
+                    self.ui.set_state("SPEAKING")
+                    self._tts_queue.put((result_text, lambda: self.signals.processing_done.emit()))
+                return
+        except Exception as e:
+            logger.warning("Local intent fast path check failed: %s", e)
+
         # Process through LLM
         self.ui.set_state("THINKING")
         logger.info("Thinking...")
@@ -1359,7 +1387,7 @@ class RaphaelController(QObject):
         else:
             self.ui.set_state("LISTENING")
             if self.wake_word_required_by_default:
-                timeout_ms = getattr(config, "STT_ACTIVE_LISTENING_TIMEOUT", 8) * 1000
+                timeout_ms = getattr(config, "STT_ACTIVE_LISTENING_TIMEOUT", 300) * 1000
                 self._active_listening_timer.start(timeout_ms)
 
     def _active_listening_timeout(self):

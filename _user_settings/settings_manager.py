@@ -38,7 +38,7 @@ _SECTION_MAP: dict[str, str] = {
     "STT_WAKE_WORDS": "voice",
     "STT_ACTIVE_LISTENING_TIMEOUT": "voice",
     "STT_PROCESS_ISOLATION": "voice",
-    "STT_WHISPER_LOCAL_MODEL": "voice",
+    "STT_MOONSHINE_MODEL": "voice",
     "INTERRUPT_WORDS": "voice",
     "LOOP_GUARD_ENABLED": "general",
     "LOOP_GUARD_IDENTICAL_THRESHOLD": "general",

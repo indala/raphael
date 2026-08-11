@@ -43,7 +43,7 @@ dependencies = [
     "sounddevice>=0.4.6",
     "miniaudio>=1.7.0",
     # Voice — STT
-    "faster-whisper>=1.0.0",
+    "useful-moonshine>=0.0.3",
     # Desktop GUI (HUD)
     "PyQt6>=6.7.0",
     "mistune>=3.0.0",

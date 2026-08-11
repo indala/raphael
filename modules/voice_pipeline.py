@@ -240,18 +240,17 @@ class GatedDetector:
         return bool(self._batch_backends)
 
     def _resolve_batch_backends(self, prefs: list[str]) -> list[str]:
-        """Keep only usable batch backends; winrt is streaming-only."""
+        """Keep only usable, healthy batch backends."""
         resolved: list[str] = []
         try:
             from modules.stt_backends import STTRegistry
 
             for name in prefs:
                 name = str(name).strip()
-                if not name or name == "winrt":
+                if not name:
                     continue
                 try:
-                    instance = STTRegistry.get(name)
-                    if instance is not None:
+                    if STTRegistry.check_health(name):
                         resolved.append(name)
                 except Exception as e:
                     logger.debug("batch backend '%s' unavailable: %s", name, e)
@@ -309,6 +308,8 @@ class GatedDetector:
         self._silence = 0
         self._too_long = False
 
+        state.on_change("wake_word_required", self._on_wake_required_change)
+
         self._thread = threading.Thread(target=self._worker, daemon=True, name="vad-gate")
         self._thread.start()
         self._running = True
@@ -318,6 +319,16 @@ class GatedDetector:
         )
         self._emit_state("SLEEPING" if self._wake_required else "LISTENING")
         return True
+
+    def _on_wake_required_change(self, prop, new_value):
+        req = bool(new_value)
+        self._wake_required = req
+        if not req:
+            self._armed = True
+        else:
+            self._armed = False
+        self.wake_handled = req
+        self._emit_state("SLEEPING" if req else "LISTENING")
 
     def stop(self):
         self._running = False
@@ -371,6 +382,10 @@ class GatedDetector:
 
     def _advance(self, speech: bool, chunk):
         """Incremental state machine fed with one VAD verdict per frame."""
+        current_wake_req = bool(state.wake_word_required)
+        if current_wake_req != self._wake_required:
+            self._on_wake_required_change("wake_word_required", current_wake_req)
+
         self._tick_timeouts()
 
         if speech:

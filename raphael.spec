@@ -95,7 +95,7 @@ hiddenimports = [
     "modules.tts_backends.edgetts_backend",
     "modules.stt",
     "modules.stt_backends.cloud",
-    "modules.stt_backends.whisper_local",
+    "modules.stt_backends.moonshine",
     "modules.stt_backends.isolated",
     "modules.clipboard",
     "modules.hotkeys",

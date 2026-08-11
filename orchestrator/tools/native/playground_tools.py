@@ -3,6 +3,8 @@ Playground tools — Native schemas and handlers for Raphael Playground Studio.
 """
 
 import logging
+import threading
+from PyQt6.QtCore import QTimer
 
 logger = logging.getLogger(__name__)
 
@@ -94,46 +96,94 @@ def get_schemas() -> list[dict]:
 
 
 def _get_controller():
-    from controller.window_manager import get_controller_instance
+    from controller.raphael_controller import get_controller_instance
     return get_controller_instance()
+
+
+def _run_on_main_thread(fn):
+    """Execute `fn()` synchronously on the main Qt GUI thread from any worker thread."""
+    if threading.current_thread() is threading.main_thread():
+        return fn()
+
+    res = [None]
+    err: list[Exception | None] = [None]
+    evt = threading.Event()
+
+    def runner():
+        try:
+            res[0] = fn()
+        except Exception as e:
+            err[0] = e
+        finally:
+            evt.set()
+
+    QTimer.singleShot(0, runner)
+    evt.wait(timeout=5.0)
+    if err[0]:
+        raise err[0]
+    return res[0]
 
 
 def render_playground_chart(chart_type: str, title: str, labels: list[str], values: list[float]) -> str:
     """Render a visual chart in the Raphael Playground window."""
-    ctrl = _get_controller()
-    if ctrl and hasattr(ctrl, "_window_manager"):
-        win = ctrl._window_manager.show_playground()
-        datasets = [{"data": values}]
-        win.render_chart(chart_type, labels, datasets, title)
+    def _do():
+        ctrl = _get_controller()
+        if ctrl and hasattr(ctrl, "_window_manager"):
+            win = ctrl._window_manager.show_playground()
+            datasets = [{"data": values}]
+            win.render_chart(chart_type, labels, datasets, title)
+            return True
+        return False
+
+    success = _run_on_main_thread(_do)
+    if success:
         return f"Rendered '{title}' ({chart_type} chart) in Raphael Playground Studio."
     return "Playground window manager unavailable."
 
 
 def render_playground_diagram(mermaid_code: str, title: str = "Architecture Diagram") -> str:
     """Render a diagram in the Raphael Playground window."""
-    ctrl = _get_controller()
-    if ctrl and hasattr(ctrl, "_window_manager"):
-        win = ctrl._window_manager.show_playground()
-        win.render_diagram(mermaid_code, title)
+    def _do():
+        ctrl = _get_controller()
+        if ctrl and hasattr(ctrl, "_window_manager"):
+            win = ctrl._window_manager.show_playground()
+            win.render_diagram(mermaid_code, title)
+            return True
+        return False
+
+    success = _run_on_main_thread(_do)
+    if success:
         return f"Rendered diagram '{title}' in Raphael Playground Studio."
     return "Playground window manager unavailable."
 
 
 def render_playground_html(html_code: str) -> str:
     """Render interactive HTML components in the Raphael Playground window."""
-    ctrl = _get_controller()
-    if ctrl and hasattr(ctrl, "_window_manager"):
-        win = ctrl._window_manager.show_playground()
-        win.render_html(html_code)
+    def _do():
+        ctrl = _get_controller()
+        if ctrl and hasattr(ctrl, "_window_manager"):
+            win = ctrl._window_manager.show_playground()
+            win.render_html(html_code)
+            return True
+        return False
+
+    success = _run_on_main_thread(_do)
+    if success:
         return "Rendered custom HTML canvas in Raphael Playground Studio."
     return "Playground window manager unavailable."
 
 
 def clear_playground() -> str:
     """Reset the Raphael Playground window canvas."""
-    ctrl = _get_controller()
-    if ctrl and hasattr(ctrl, "_window_manager"):
-        win = ctrl._window_manager.show_playground()
-        win.clear_playground()
+    def _do():
+        ctrl = _get_controller()
+        if ctrl and hasattr(ctrl, "_window_manager"):
+            win = ctrl._window_manager.show_playground()
+            win.clear_playground()
+            return True
+        return False
+
+    success = _run_on_main_thread(_do)
+    if success:
         return "Cleared Raphael Playground Studio canvas."
     return "Playground window manager unavailable."

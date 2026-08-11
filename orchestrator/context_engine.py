@@ -157,7 +157,7 @@ class DefaultContextEngine(ContextEngine):
         total_chars = sum(len(str(m.get("content") or "")) for m in history)
 
         if total_chars <= char_budget:
-            return history
+            return list(history)
 
         # Keep first turn (system context) + most recent turns within budget
         first = history[:1] if history else []
@@ -204,7 +204,7 @@ class DefaultContextEngine(ContextEngine):
         if self._compressor.should_compress(history, max_history):
             history = self._compressor.compress(history, llm, max_history)
 
-        return history
+        return list(history)
 
 
 # ── Global default engine ─────────────────────────────────────

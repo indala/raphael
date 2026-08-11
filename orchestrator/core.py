@@ -10,6 +10,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable, Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -57,7 +58,7 @@ from orchestrator.log_utils import (
 )
 from orchestrator.plugin import get_hooks
 from orchestrator.policy import ConfirmationRequest, evaluate_tool_call, permission_message
-from orchestrator.tools import get_tool_map, get_tool_schemas
+from orchestrator.tools import get_tool_schemas
 from orchestrator.loop_guard import LoopGuard
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,21 @@ class _LLMResponse:
     def __init__(self, content: str):
         self.content = content
         self.tool_calls = None
+
+
+@dataclass
+class RequestBudget:
+    """Cap on tokens and total execution time for an orchestrator turn."""
+    max_tokens: int = 4096
+    time_budget_seconds: float = 30.0
+    start_time: float = field(default_factory=time.time)
+
+    def is_exceeded(self, current_tokens: int = 0) -> bool:
+        if current_tokens > self.max_tokens:
+            return True
+        if (time.time() - self.start_time) > self.time_budget_seconds:
+            return True
+        return False
 
 
 def _is_llm_error(content: str | None) -> bool:
@@ -837,6 +853,7 @@ class ToolExecutor:
         self,
         confirmation_provider: Callable[[ConfirmationRequest], bool] | None = None,
     ):
+        from orchestrator.tools import get_tool_map
         self.tool_map = get_tool_map()
         # Resolves confirm_required decisions. None => auto-deny (headless/tests).
         self.confirmation_provider = confirmation_provider
@@ -1581,11 +1598,21 @@ class RaphaelOrchestrator:
         completed_rounds = 0
         _task_id = self._init_task(user_input)
         loop_guard = LoopGuard() if config.LOOP_GUARD_ENABLED else None
+        request_budget = RequestBudget()
+
         for round_idx in range(max_tool_rounds):
             completed_rounds += 1
             if self._activity_callback:
                 with contextlib.suppress(Exception):
                     self._activity_callback()  # type: ignore[misc]
+
+            if request_budget.is_exceeded():
+                budget_err = "Request budget exceeded (took >30s or >4096 tokens). Stopped execution safely."
+                self.history.append({"role": "assistant", "content": budget_err})
+                log_event("Budget Exceeded")
+                finalize_timeline()
+                clear_request_id()
+                return budget_err
 
             # Check for interrupt between rounds
             from orchestrator.task_manager import TaskManager
@@ -1708,11 +1735,11 @@ class RaphaelOrchestrator:
                         return "(interrupted)"
 
                 # Append results in original order (preserving LLM's intent)
+                from orchestrator.context_compressor import compress_tool_result
+
                 for tool_call in response.tool_calls:
                     result = results.get(tool_call.id, "Error: tool result missing")
-                    # Truncate oversized results
-                    if len(result) > config.MAX_TOOL_RESULT_CHARS:
-                        result = result[:config.MAX_TOOL_RESULT_CHARS] + "\n...(truncated)"
+                    result = compress_tool_result(result)
                     if self._activity_callback:
                         with contextlib.suppress(Exception):
                             self._activity_callback()  # type: ignore[misc]

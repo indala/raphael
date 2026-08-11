@@ -340,8 +340,8 @@ class _DiscoverThread(QThread):
 
     done = pyqtSignal(list)  # list[str] — discovered model IDs
 
-    def __init__(self, base_url: str, api_key: str):
-        super().__init__()
+    def __init__(self, base_url: str, api_key: str, parent=None):
+        super().__init__(parent)
         self._base_url = base_url
         self._api_key = api_key
 
@@ -1599,28 +1599,33 @@ class VoiceTab(ScrollableTab):
                 self._add_list_item(self._tts_list, label, name)
 
     def _populate_stt_list(self):
-        """Fill the STT order list: STTRegistry backends + STT-capable endpoints."""
+        """Fill the STT order list: local built-in backends + STT-capable endpoints.
+
+        Cloud/API STT is endpoint-driven — it shows up as each endpoint that
+        declares an ``stt_model``, not as a hardcoded built-in provider.
+        """
         self._stt_list.clear()
 
         available: dict[str, str] = {}
 
-        # Add registry-based backends (winrt, groq, etc.)
+        # Local built-in backends only (moonshine, ...) — the cloud/API
+        # backend requires an endpoint and is listed through endpoints below.
         try:
             from modules.stt_backends import STTRegistry
-            for name in STTRegistry.available_backends():
+            for name in STTRegistry.local_backends():
                 available[name] = f"{name}  (built-in)"
         except Exception:
             pass
 
-        # Add endpoint-based STT backends
+        # Endpoint-based STT backends (dynamic — whatever declares stt_model)
         from orchestrator.endpoint_registry import all as _all_eps
         for ep in _all_eps():
-            if ep.stt_model:
+            if ep.stt_model and ep.base_url:
                 available[ep.name] = f"{ep.name}  ({ep.stt_model})"
 
         saved_order = getattr(config, "STT_PREFERRED_BACKENDS", None)
         if not saved_order:
-            saved_order = ["winrt", "groq"]
+            saved_order = ["moonshine"]
 
         added: set[str] = set()
         for name in saved_order:
@@ -1826,6 +1831,9 @@ class FetchIPThread(QThread):
     """Background thread to fetch the public IP address without blocking the UI."""
     done = pyqtSignal(str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
     def run(self):
         import urllib.request
         urls = [
@@ -1919,8 +1927,9 @@ class ToolsTab(ScrollableTab):
         self._fetch_ip()
 
     def _fetch_ip(self):
-        self._ip_thread = FetchIPThread()
+        self._ip_thread = FetchIPThread(parent=self)
         self._ip_thread.done.connect(self._on_ip_fetched)
+        self._ip_thread.finished.connect(self._ip_thread.deleteLater)
         self._ip_thread.start()
 
     def _on_ip_fetched(self, ip: str):

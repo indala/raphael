@@ -15,8 +15,8 @@ class STTRegistry:
     Registry for STT backends with decorator registration and fallback chain.
 
     Usage:
-        @STTRegistry.register("groq")
-        class GroqBackend(STTBackend):
+        @STTRegistry.register("cloud")
+        class CloudBackend(STTBackend):
             ...
     """
 
@@ -32,8 +32,8 @@ class STTRegistry:
             name: Backend name (defaults to class attribute ``name``).
 
         Usage:
-            @STTRegistry.register("groq")
-            class GroqBackend(STTBackend):
+            @STTRegistry.register("cloud")
+            class CloudBackend(STTBackend):
                 ...
         """
         def decorator(backend_cls: type[STTBackend]):
@@ -51,6 +51,12 @@ class STTRegistry:
 
         backend_cls = cls._backends.get(name)
         if backend_cls is None:
+            # Dynamic backend: any endpoint that declares an ``stt_model`` in
+            # settings.toml ([[endpoints]]) can be used by name as a cloud STT
+            # backend bound to that endpoint.
+            bound = cls._resolve_endpoint_backend(name)
+            if bound is not None:
+                return bound
             logger.warning("Unknown STT backend: %s", name)
             return None
 
@@ -63,9 +69,46 @@ class STTRegistry:
             return None
 
     @classmethod
+    def _resolve_endpoint_backend(cls, name: str) -> STTBackend | None:
+        """Map an endpoint name to a cloud STT backend bound to that endpoint."""
+        try:
+            from orchestrator.endpoint_registry import get as _ep_get
+            ep = _ep_get(name)
+            if ep is None or not getattr(ep, "stt_model", "") or not getattr(ep, "base_url", ""):
+                return None
+            backend_cls = next(
+                (b for b in cls._backends.values() if getattr(b, "requires_endpoint", False)),
+                None,
+            )
+            if backend_cls is None:
+                return None
+            instance = backend_cls(endpoint=ep)
+            # Configure eagerly so the bound backend is ready (model/base_url
+            # resolved) as soon as it's returned from get(). health() re-checks
+            # lazily on later calls, so a failure here surfaces immediately.
+            if not instance.health():
+                logger.warning("STT: endpoint '%s' failed to configure as cloud backend", name)
+                return None
+            cls._instances[name] = instance
+            logger.debug("STT: bound endpoint '%s' to cloud backend (model=%s)", name, ep.stt_model)
+            return instance
+        except Exception as e:
+            logger.error("Failed to resolve STT backend for endpoint '%s': %s", name, e)
+            return None
+
+    @classmethod
     def available_backends(cls) -> list[str]:
         """Return names of all registered backends."""
         return list(cls._backends.keys())
+
+    @classmethod
+    def local_backends(cls) -> list[str]:
+        """Names of built-in backends that don't require an endpoint (moonshine, ...)."""
+        return [
+            name
+            for name, backend_cls in cls._backends.items()
+            if not getattr(backend_cls, "requires_endpoint", False)
+        ]
 
     @classmethod
     def check_health(cls, name: str) -> bool:

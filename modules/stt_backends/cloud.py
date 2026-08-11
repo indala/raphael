@@ -1,8 +1,10 @@
 """
-Cloud STT Backend — Groq / OpenAI Whisper batch transcription.
+Cloud STT Backend — OpenAI-compatible /audio/transcriptions batch transcription.
 
-Cloud-based transcription using Groq / OpenAI Whisper batch API.
-Falls through backends automatically. Uses the OpenAI-compatible /audio/transcriptions multipart endpoint.
+Cloud-based transcription using any endpoint that declares an ``stt_model``
+(settings.toml [[endpoints]]). There is no built-in provider or model — the
+endpoint, model, API key and base URL are all resolved dynamically. Uses the
+OpenAI-compatible /audio/transcriptions multipart endpoint.
 
 Inspired by Zero's internal/dictation/transcriber_cloud.go
 """
@@ -44,26 +46,33 @@ _AGC_MAX_GAIN = 20.0          # Max amplification (prevents noise explosion)
 _AGC_SMOOTHING = 0.92         # Higher = slower adaptation to level changes
 
 
-@STTRegistry.register("groq")
-class GroqSTTBackend(STTBackend):
+@STTRegistry.register("cloud")
+class CloudSTTBackend(STTBackend):
     """
-    Cloud STT via Groq's Whisper-large-v3-turbo endpoint.
+    Cloud STT via an OpenAI-compatible /audio/transcriptions endpoint.
 
-    Requires GROQ_API_KEY set in config or GROQ_API_KEY environment variable.
-    Supports both one-shot transcription (transcribe/transcribe_file) and
-    continuous streaming via mic capture + VAD (start_streaming/stop).
+    Provider-agnostic: bound to whichever endpoint in settings.toml declares
+    an ``stt_model`` (+ base URL). There is no built-in provider or model
+    default. Supports both one-shot transcription (transcribe/transcribe_file)
+    and continuous streaming via mic capture + VAD (start_streaming/stop).
     """
 
-    PROVIDER = "groq"
+    PROVIDER = "cloud"
+    #: API/endpoint-driven backend — the settings UI lists it through
+    #: STT-capable endpoints, not as a hardcoded "(built-in)" provider.
+    requires_endpoint = True
 
     @property
     def name(self) -> str:
-        return "groq"
+        return "cloud"
 
-    def __init__(self):
+    def __init__(self, endpoint=None):
+        self._endpoint = endpoint  # optional bound endpoint from the registry
+        self._endpoint_name = ""
+        self._ready = False
         self._api_key = ""
-        self._model = "whisper-large-v3-turbo"
-        self._base_url = "https://api.groq.com/openai/v1"
+        self._model = ""  # resolved dynamically from the endpoint's stt_model
+        self._base_url = ""  # resolved dynamically from the endpoint's base_url
         # Streaming state
         self._stream = None
         self._stop_event = None
@@ -78,31 +87,42 @@ class GroqSTTBackend(STTBackend):
         self._agc_gain = 1.0
 
     def _configure(self):
-        """Resolve API key, model, and base URL from endpoint registry."""
-        if self._api_key:
+        """Resolve endpoint, model, and base URL dynamically from the endpoint registry (settings.toml [[endpoints]]).
+
+        A bound endpoint is used as-is; an unbound instance picks the first
+        STT-capable endpoint (registry order = priority given in settings).
+        There is no built-in provider or model default.
+        """
+        if self._ready:
             return True
-        # Try endpoint registry first (canonical source — settings.toml [[endpoints]])
+        if self._endpoint is not None:
+            return self._configure_from_endpoint(self._endpoint)
         try:
-            from orchestrator.endpoint_registry import get as _get_ep
-            ep = _get_ep("groq")
-            if ep and ep.api_key:
-                self._api_key = ep.api_key
-                if ep.stt_model:
-                    self._model = ep.stt_model
-                if ep.base_url:
-                    self._base_url = ep.base_url
-                return True
-        except Exception:
-            pass
-        # Fallback: config constant (settings.toml)
-        try:
-            import config as cfg
-            key = getattr(cfg, "GROQ_API_KEY", "")
-        except Exception:
-            key = ""
-        if not key:
+            from orchestrator.endpoint_registry import all as _all_eps
+            for ep in _all_eps():
+                if getattr(ep, "stt_model", "") and getattr(ep, "base_url", ""):
+                    return self._configure_from_endpoint(ep)
+        except Exception as e:
+            logger.debug("CloudSTT endpoint resolution error: %s", e)
+        return False
+
+    def _configure_from_endpoint(self, ep) -> bool:
+        """Apply an endpoint's stt_model/base_url/api_key to this backend."""
+        stt_model = (getattr(ep, "stt_model", "") or "").strip()
+        base_url = (getattr(ep, "base_url", "") or "").strip()
+        if not stt_model or not base_url:
+            logger.warning(
+                "CloudSTT: endpoint '%s' is missing stt_model/base_url — add stt_model = \"<model>\" "
+                "under [[endpoints]] in settings.toml",
+                getattr(ep, "name", "?"),
+            )
             return False
-        self._api_key = key
+        self._api_key = getattr(ep, "api_key", "") or ""
+        self._model = stt_model
+        self._base_url = base_url
+        self._endpoint_name = getattr(ep, "name", "")
+        self._ready = True
+        logger.info("CloudSTT: configured from endpoint '%s' (model: %s)", self._endpoint_name, self._model)
         return True
 
     @property
@@ -119,7 +139,7 @@ class GroqSTTBackend(STTBackend):
 
         Uses ``sounddevice.InputStream`` for capture and pure energy
         detection for voice activity (no C extensions in the audio thread).
-        Detected speech segments are sent to Groq in background threads.
+        Detected speech segments are sent to the transcription API in background threads.
 
         Args:
             callback: Callable ``text: str, is_final: bool`` receiving results.
@@ -129,13 +149,13 @@ class GroqSTTBackend(STTBackend):
             caller can fall through to the next STT backend.
         """
         if not self._configure():
-            logger.error("GroqSTT: cannot start — API key not configured")
+            logger.error("CloudSTT: cannot start — no endpoint with stt_model configured")
             return None
 
         try:
             import sounddevice as sd
         except ImportError:
-            logger.error("GroqSTT: sounddevice not installed")
+            logger.error("CloudSTT: sounddevice not installed")
             return None
 
         # Pre-import state reference (NOT in the callback — imports in
@@ -158,7 +178,7 @@ class GroqSTTBackend(STTBackend):
             except sd.CallbackStop:
                 raise  # Let sounddevice handle this
             except Exception as e:
-                logger.error("GroqSTT callback error: %s", e)
+                logger.error("CloudSTT callback error: %s", e)
 
         def _audio_callback_body(indata, frames, time_info, status):
             """Inner callback with no C extension calls — pure numpy."""
@@ -223,7 +243,7 @@ class GroqSTTBackend(STTBackend):
                         # Convert to int16 PCM and store
                         audio_int16 = (channel * 32767).astype(np.int16)
                         self._speech_buffer = bytearray(audio_int16.tobytes())
-                        logger.debug("GroqSTT: speech started (rms=%.4f)", rms)
+                        logger.debug("CloudSTT: speech started (rms=%.4f)", rms)
                 else:
                     self._total_speech_frames += 1
                     audio_int16 = (channel * 32767).astype(np.int16)
@@ -258,7 +278,7 @@ class GroqSTTBackend(STTBackend):
                             daemon=True,
                         ).start()
 
-        logger.info("GroqSTT: starting mic capture at %dHz", _SAMPLE_RATE)
+        logger.info("CloudSTT: starting mic capture at %dHz", _SAMPLE_RATE)
         try:
             import sounddevice as sd
 
@@ -267,14 +287,14 @@ class GroqSTTBackend(STTBackend):
                 devices = sd.query_devices()
                 has_input = any(d.get("max_input_channels", 0) > 0 for d in devices if isinstance(d, dict))
                 if not has_input:
-                    logger.warning("GroqSTT: no microphone input devices found — skipping mic capture")
+                    logger.warning("CloudSTT: no microphone input devices found — skipping mic capture")
                     return StreamHandle(self)
             except Exception as dev_err:
-                logger.debug("GroqSTT: device query failed: %s", dev_err)
+                logger.debug("CloudSTT: device query failed: %s", dev_err)
 
             # ── Check UI mute state ──
             if _app_state.muted:
-                logger.info("GroqSTT: mic muted in UI — not starting capture")
+                logger.info("CloudSTT: mic muted in UI — not starting capture")
                 return StreamHandle(self)
 
             self._stream = sd.InputStream(
@@ -287,16 +307,16 @@ class GroqSTTBackend(STTBackend):
             self._stream.start()
             return StreamHandle(self)
         except sd.PortAudioError as e:
-            logger.warning("GroqSTT: mic unavailable (device busy or missing): %s", e)
+            logger.warning("CloudSTT: mic unavailable (device busy or missing): %s", e)
             self._stream = None
             return StreamHandle(self)
         except AttributeError as e:
             # sounddevice might not expose query_devices properly on some builds
-            logger.debug("GroqSTT: device query attribute error: %s", e)
+            logger.debug("CloudSTT: device query attribute error: %s", e)
             self._stream = None
             return StreamHandle(self)
         except Exception as e:
-            logger.error("GroqSTT: mic capture failed: %s", e)
+            logger.error("CloudSTT: mic capture failed: %s", e)
             self._stream = None
             self._vad = None
             return StreamHandle(self)
@@ -318,24 +338,24 @@ class GroqSTTBackend(STTBackend):
         # Count 30ms frames — skip very short segments (background noise blips)
         num_frames = len(audio_segment) // 2 // _FRAME_SIZE
         if num_frames < _MIN_SEGMENT_FRAMES:
-            logger.debug("GroqSTT: segment too short (%d frames), skipping", num_frames)
+            logger.debug("CloudSTT: segment too short (%d frames), skipping", num_frames)
             return
         try:
             wav_data = self._ensure_wav(audio_segment)
             text = self._transcribe_wav(wav_data)
             if text:
-                logger.debug("GroqSTT: transcribed (%d chars): %s", len(text), text[:60])
+                logger.debug("CloudSTT: transcribed (%d chars): %s", len(text), text[:60])
                 callback(text, is_final=True)
         except AuthError as e:
-            logger.error("GroqSTT auth failed: %s", e)
+            logger.error("CloudSTT auth failed: %s", e)
         except Exception as e:
-            logger.debug("GroqSTT transcription error: %s", e)
+            logger.debug("CloudSTT transcription error: %s", e)
 
     def transcribe(self, audio: bytes) -> STTResult:
         if not self._configure():
             return STTResult(
                 success=False, backend=self.name,
-                error="GROQ_API_KEY not configured",
+                error="cloud STT not configured (no endpoint with stt_model)",
             )
 
         t0 = time.time()
@@ -362,16 +382,19 @@ class GroqSTTBackend(STTBackend):
         if not self._configure():
             return STTResult(
                 success=False, backend=self.name,
-                error="GROQ_API_KEY not configured",
+                error="cloud STT not configured (no endpoint with stt_model)",
             )
         t0 = time.time()
         try:
             with open(path, "rb") as f:
                 files = {"file": (Path(path).name, f, "audio/wav")}
                 data = {"model": self._model, "response_format": "json"}
+                headers = {}
+                if self._api_key:
+                    headers["Authorization"] = f"Bearer {self._api_key}"
                 resp = requests.post(
                     f"{self._base_url}/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    headers=headers,
                     files=files, data=data, timeout=60,
                 )
                 if resp.status_code == 401:
@@ -425,9 +448,12 @@ class GroqSTTBackend(STTBackend):
         """Send WAV data to the transcription API."""
         files = {"file": ("audio.wav", wav_data, "audio/wav")}
         data = {"model": self._model, "response_format": "json"}
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         resp = requests.post(
             f"{self._base_url}/audio/transcriptions",
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            headers=headers,
             files=files, data=data, timeout=60,
         )
         if resp.status_code == 401:

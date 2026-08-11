@@ -485,6 +485,25 @@ class MusicPlayer:
             self._start_bg_thread()
             return f"Now playing: {entry.title}"
 
+    def play_file(self, path: str | Path) -> str:
+        """Play a local audio file directly from disk."""
+        from audio.music_metadata import extract_artist, extract_title
+        fp = Path(path)
+        if not fp.exists() or not fp.is_file():
+            return f"File not found: {fp}"
+        with self._lock:
+            self.stop()
+            entry = SongEntry(
+                title=extract_title(fp),
+                artist=extract_artist(fp),
+                filepath=fp,
+                duration_sec=self._probe_duration(fp),
+            )
+            self._queue = [entry]
+            self._current_index = 0
+            self._start_bg_thread()
+            return f"Now playing: {entry.title}"
+
     def play_playlist(self, query: str, count: int = 5) -> str:
         """Download and enqueue multiple songs matching a broad query."""
         with self._lock:
