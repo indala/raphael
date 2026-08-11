@@ -56,7 +56,7 @@ from orchestrator.log_utils import (
     start_timeline,
 )
 from orchestrator.plugin import get_hooks
-from orchestrator.policy import evaluate_tool_call, permission_message
+from orchestrator.policy import ConfirmationRequest, evaluate_tool_call, permission_message
 from orchestrator.tools import get_tool_map, get_tool_schemas
 from orchestrator.loop_guard import LoopGuard
 
@@ -833,8 +833,13 @@ class ToolExecutor:
         "get_positions": 120,         # 2 min
     }
 
-    def __init__(self):
+    def __init__(
+        self,
+        confirmation_provider: Callable[[ConfirmationRequest], bool] | None = None,
+    ):
         self.tool_map = get_tool_map()
+        # Resolves confirm_required decisions. None => auto-deny (headless/tests).
+        self.confirmation_provider = confirmation_provider
 
     @classmethod
     def observe_tool(cls, name: str, elapsed_ms: float) -> None:
@@ -948,7 +953,17 @@ class ToolExecutor:
 
         decision = evaluate_tool_call(tool_name, args)
         if not decision.allowed:
-            return permission_message(tool_name, decision)
+            granted = False
+            if decision.requires_confirmation and self.confirmation_provider is not None:
+                request = ConfirmationRequest(
+                    tool_name=tool_name,
+                    args=args,
+                    reason=decision.reason,
+                    risk=decision.risk,
+                )
+                granted = self.confirmation_provider(request)
+            if not granted:
+                return permission_message(tool_name, decision)
 
         start = time.perf_counter()
         try:

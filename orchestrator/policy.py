@@ -1,8 +1,9 @@
-"""
-Permission policy for Raphael tool calls.
+"""Permission policy for Raphael tool calls.
 
-Only blocks truly destructive commands. Everything else is auto-allowed
-since Raphael is a personal desktop assistant with the user present.
+Raphael is a personal desktop assistant, so routine local actions should feel
+fast. Irreversible or system-level operations are never auto-allowed: they
+either carry an explicit ``confirm=true`` from the conversation or raise a
+``confirm_required`` decision that the HUD confirmation dialog resolves.
 """
 
 from __future__ import annotations
@@ -25,17 +26,33 @@ class PolicyDecision:
         return not self.allowed and not self.requires_confirmation
 
 
+@dataclass(frozen=True)
+class ConfirmationRequest:
+    """Contract between the policy layer and the UI confirmation flow.
+
+    Built when a tool call needs user approval; the executor hands it to
+    its ``confirmation_provider`` (wired by the controller to the HUD).
+    """
+
+    tool_name: str
+    args: dict[str, Any]
+    reason: str
+    risk: str
+
+
 DESTRUCTIVE_COMMAND_PATTERNS = [
     r"\bdel\b",
     r"\berase\b",
     r"\brd\b",
     r"\brmdir\b",
     r"\bremove-item\b",
+    r"\bremove-variable\b",
     r"\brm\b",
     r"\bformat\b",
     r"\bshutdown\b",
     r"\brestart-computer\b",
     r"\bstop-computer\b",
+    r"\bsc\s+delete\b",
     r"\breg\s+delete\b",
     r"\btaskkill\b",
     r"\bkill\b",
@@ -44,18 +61,37 @@ DESTRUCTIVE_COMMAND_PATTERNS = [
 SENSITIVE_COMMAND_PATTERNS = [
     r"\bnet\s+user\b",
     r"\bnet\s+localgroup\b",
+    r"\bnew-localuser\b",
+    r"\bremove-localuser\b",
+    r"\badd-localgroupmember\b",
+    r"\bremove-localgroupmember\b",
     r"\bset-executionpolicy\b",
     r"\bbcdedit\b",
     r"\bcipher\b",
+    r"\btakeown\b",
+    r"\bicacls\b",
     r"\bcredential\b",
     r"\bpassword\b",
     r"\btoken\b",
     r"\bsecret\b",
 ]
 
+HIGH_IMPACT_TOOLS = {
+    "power_hibernate",
+    "power_reboot",
+    "power_shutdown",
+    "power_sleep",
+    "process_kill",
+    "recycle_bin_empty",
+    "service_start",
+    "service_stop",
+    "env_set",
+    "import_tool",
+}
+
 
 def evaluate_tool_call(tool_name: str, args: dict[str, Any] | None = None) -> PolicyDecision:
-    """Classify a tool call. Only blocks destructive commands."""
+    """Classify a tool call."""
     args = args or {}
 
     if tool_name == "run_command":
@@ -64,15 +100,22 @@ def evaluate_tool_call(tool_name: str, args: dict[str, Any] | None = None) -> Po
     if tool_name == "launch_app":
         return _evaluate_launch(str(args.get("app_name", "")))
 
-    # Everything else is auto-allowed
+    if tool_name in HIGH_IMPACT_TOOLS and not bool(args.get("confirm")):
+        return PolicyDecision(
+            False,
+            "confirm_required",
+            f"{tool_name} can affect system state; ask the user to confirm",
+            requires_confirmation=True,
+        )
+
     return PolicyDecision(True, "auto_allowed")
 
 
-def permission_message(_tool_name: str, decision: PolicyDecision) -> str:
-    """Return text for blocked tools."""
-    if decision.blocked:
-        return f"Blocked for safety: {decision.reason}"
-    return "Allowed."
+def permission_message(tool_name: str, decision: PolicyDecision) -> str:
+    """Return text for tools the policy did not auto-allow."""
+    if decision.requires_confirmation:
+        return f"Needs your confirmation: {tool_name}: {decision.reason}"
+    return f"Blocked for safety: {tool_name}: {decision.reason}"
 
 
 def _evaluate_launch(app_name: str) -> PolicyDecision:

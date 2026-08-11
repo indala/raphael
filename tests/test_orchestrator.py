@@ -2,14 +2,10 @@
 Tests for the core orchestrator — ToolExecutor and RaphaelOrchestrator.
 Run with: python -m pytest tests/test_orchestrator.py -v
 """
-
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# ruff: noqa: I001
 
 from orchestrator.core import ToolExecutor
+from unittest.mock import MagicMock, patch
 
 
 # ── ToolExecutor tests ──
@@ -46,8 +42,6 @@ def test_tool_executor_has_expected_tools():
         "get_agent_performance",
         # Tool health
         "check_tool_health",
-        # Session cost
-        "get_session_cost",
         # Workflow
         "execute_workflow",
         "list_workflows",
@@ -188,7 +182,7 @@ def test_process_message_simple(mock_llm_class):
 @patch("orchestrator.memory_agent.get_relevant_context", return_value="")
 @patch("memory.agent_memory.get_context", return_value="")
 @patch("orchestrator.core.LLMClient")
-def test_process_message_with_tool_call(mock_llm_class, mock_get_context, mock_get_relevant):
+def test_process_message_with_tool_call(mock_llm_class, _mock_get_context, _mock_get_relevant):
     """Single tool call followed by text response."""
     mock_llm = MagicMock()
 
@@ -241,8 +235,8 @@ def test_policy_allows_safe_read_only_command():
     assert decision.risk == "safe"
 
 
-def test_policy_auto_allows_unknown_command():
-    """Previously confirm-required commands are now auto-allowed."""
+def test_policy_allows_non_destructive_command():
+    """Non-destructive commands should remain available for a desktop assistant."""
     from orchestrator.policy import evaluate_tool_call
     decision = evaluate_tool_call("run_command", {"command": "pip install something"})
     assert decision.allowed, "Non-destructive commands should be auto-allowed"
@@ -256,17 +250,102 @@ def test_policy_blocks_destructive_command():
     assert "destructive" in decision.reason
 
 
-def test_tool_executor_auto_allows_risky_desktop_tools():
-    """Previously risky tools like ui_click are now auto-allowed (no permission prompt)."""
+def test_policy_high_impact_tool_requires_confirmation():
+    """Unconfirmed high-impact tools must raise a confirm_required decision."""
+    from orchestrator.policy import evaluate_tool_call
+    decision = evaluate_tool_call("power_shutdown", {})
+    assert decision.requires_confirmation
+    assert not decision.blocked, "confirm_required is not a hard block"
+    assert not decision.allowed
+
+
+def test_policy_allows_high_impact_tool_with_confirmation():
+    """Confirmed high-impact actions can still be used by a personal assistant."""
+    from orchestrator.policy import evaluate_tool_call
+    decision = evaluate_tool_call("power_shutdown", {"confirm": True})
+    assert decision.allowed
+
+
+def test_tool_executor_auto_allows_desktop_interaction_tools():
+    """Desktop interaction tools like ui_click should remain available."""
     executor = ToolExecutor()
     result = executor.execute("ui_click", {"x": 100, "y": 100})
     assert "Permission required" not in result, "No permission prompt should appear"
 
 
+# ── Confirmation flow (Phase 1) ──
+
+
+def test_executor_denies_confirm_required_without_provider():
+    """Headless executor (no confirmation_provider) must deny, never run."""
+    from orchestrator.policy import evaluate_tool_call, permission_message
+
+    executor = ToolExecutor()  # confirmation_provider defaults to None
+    result = executor.execute("power_shutdown", {})
+    assert result == permission_message(
+        "power_shutdown", evaluate_tool_call("power_shutdown", {})
+    )
+    assert "confirmation" in result
+
+
+def test_executor_denies_when_provider_says_no():
+    """A provider that refuses must keep the tool from running."""
+    executor = ToolExecutor(confirmation_provider=lambda _req: False)
+    result = executor.execute("power_shutdown", {})
+    assert "confirmation" in result
+
+
+def test_executor_runs_when_provider_grants():
+    """A granting provider lets the call proceed — no shutdown in tests."""
+    calls: list = []
+    executor = ToolExecutor(
+        confirmation_provider=lambda req: calls.append(req.tool_name) or True
+    )
+    # power_shutdown is a stub in the test env; granting must reach the tool.
+    executor.execute("power_shutdown", {"confirm": False})
+    assert calls == ["power_shutdown"]
+
+
+def test_executor_provider_receives_request_details():
+    """The provider must see the tool name, args, risk and reason."""
+    from orchestrator.policy import ConfirmationRequest
+
+    captured: ConfirmationRequest | None = None
+
+    def provider(req: ConfirmationRequest) -> bool:
+        nonlocal captured
+        captured = req
+        return False
+
+    executor = ToolExecutor(confirmation_provider=provider)
+    executor.execute("process_kill", {"pid": 1234})
+    assert captured is not None
+    assert captured.tool_name == "process_kill"
+    assert captured.args == {"pid": 1234}
+    assert captured.risk == "confirm_required"
+    assert captured.reason
+
+
+def test_session_allowlist_grant_and_check():
+    """'Always allow (this session)' grants must be session-scoped state."""
+    from controller.state import state as s
+
+    tool = "power_shutdown"
+    assert not s.session_allows(tool)
+    try:
+        s.allow_session_tool(tool)
+        assert s.session_allows(tool)
+    finally:
+        s._session_allowed_tools.discard(tool)
+    assert not s.session_allows(tool)
+
+
 def test_startup_routine_daily_runs_once_per_day():
     """Daily routines should skip after they have already run today."""
     from datetime import datetime
+
     from orchestrator.routines import RoutineSpec, should_run
+
     routine = RoutineSpec(name="weather", tool_name="get_weather", last_run="2026-06-30", frequency="daily")
     due, reason = should_run(routine, datetime(2026, 6, 30, 9, 0))
     assert not due

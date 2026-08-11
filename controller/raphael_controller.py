@@ -80,6 +80,7 @@ class RaphaelSignals(QObject):
     task_status_changed = pyqtSignal(dict)
     task_finished = pyqtSignal(dict)
     orchestrator_ready = pyqtSignal(object)
+    confirmation_requested = pyqtSignal(object)  # ConfirmationRequest
 
 
 class RaphaelController(QObject):
@@ -122,6 +123,12 @@ class RaphaelController(QObject):
         self._last_interaction_time = time.time()
         self._consolidation_triggered = False
 
+        # ── Tool confirmation handshake ──
+        # Worker thread sets the event + result; GUI thread resolves it by
+        # showing the ConfirmationDialog. Timeout ⇒ deny (safe default).
+        self._confirm_event = threading.Event()
+        self._confirm_result = False
+
         # ── Proactive Engine (idle check-ins + topic monitoring) ──
         self.proactive_engine = ProactiveEngine(
             submit_cb=self._submit_proactive,
@@ -145,6 +152,7 @@ class RaphaelController(QObject):
         self.signals.task_status_changed.connect(self._handle_task_status_changed_gui)
         self.signals.task_finished.connect(self._handle_task_finished_gui)
         self.signals.orchestrator_ready.connect(self._on_orchestrator_ready)
+        self.signals.confirmation_requested.connect(self._on_confirmation_requested_gui)
 
         # ── Reactive state subscriptions (replaces manual ui.set_* calls) ──
         # on_change callbacks fire on the *setting* thread.  For properties
@@ -236,6 +244,8 @@ class RaphaelController(QObject):
         self.raphael = orch
         self.raphael.set_activity_callback(lambda: self.signals.reset_watchdog.emit())
         self.raphael.set_ui_log(self.ui.write_log)
+        # Route confirm_required policy decisions through the HUD dialog.
+        self.raphael.executor.confirmation_provider = self._request_confirmation
 
     def _init_phase2(self):
         """Audio system state — COM bridge calls that may block briefly."""
@@ -426,6 +436,45 @@ class RaphaelController(QObject):
             self._tts_queue.put((text, lambda: self.signals.processing_done.emit()))
         else:
             self._done()
+
+    # ── Tool confirmation (policy confirm_required → HUD dialog) ──
+
+    def _request_confirmation(self, request) -> bool:
+        """Provider for ToolExecutor — runs on the worker thread.
+
+        Session grants short-circuit.  Otherwise the GUI thread shows the
+        ConfirmationDialog; we block on an Event until it answers.
+        Timeout (2 min) ⇒ deny, so a stuck dialog can never wedge the
+        executor.
+        """
+        if state.session_allows(request.tool_name):
+            return True
+        self._confirm_result = False
+        self._confirm_event.clear()
+        self.signals.confirmation_requested.emit(request)
+        if not self._confirm_event.wait(timeout=120):
+            logger.warning("Confirmation for %s timed out — denied", request.tool_name)
+        return self._confirm_result
+
+    def _on_confirmation_requested_gui(self, request):
+        """Main-thread slot: show the modal dialog and record the verdict."""
+        try:
+            from ui.confirmation_dialog import ConfirmationDialog
+
+            dialog = ConfirmationDialog(request, parent=self.ui.window)
+            result = dialog.exec()
+            if result == ConfirmationDialog.RESULT_ALLOW_SESSION:
+                state.allow_session_tool(request.tool_name)
+                self._confirm_result = True
+            elif result == ConfirmationDialog.RESULT_ALLOW_ONCE:
+                self._confirm_result = True
+            else:
+                self._confirm_result = False
+        except Exception as exc:
+            logger.error("Confirmation dialog failed: %s — denying", exc)
+            self._confirm_result = False
+        finally:
+            self._confirm_event.set()
 
     # ── Floating Minion Handlers & UI State ───────────────────────
 

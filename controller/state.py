@@ -45,6 +45,11 @@ class RuntimeState:
         # Reactive callbacks: {property_name: [callback, ...]}
         self._listeners: dict[str, list[Callable[[str, Any], None]]] = {}
 
+        # Session-scoped tool permissions ("Always allow" grants).
+        # Ephemeral by design: cleared on restart, never persisted, so a
+        # forgotten grant cannot outlive the session that issued it.
+        self._session_allowed_tools: set[str] = set()
+
     # ── Observer registration ──
 
     def on_change(self, prop: str, callback: Callable[[str, Any], None]) -> None:
@@ -61,6 +66,18 @@ class RuntimeState:
                 cb(prop, value)
             except Exception:
                 pass  # never let a broken listener break state
+
+    # ── Session tool permissions ──
+
+    def session_allows(self, tool_name: str) -> bool:
+        """True if the user granted *tool_name* for this session."""
+        with self._lock:
+            return tool_name in self._session_allowed_tools
+
+    def allow_session_tool(self, tool_name: str) -> None:
+        """Grant *tool_name* for the rest of this session (never persisted)."""
+        with self._lock:
+            self._session_allowed_tools.add(tool_name)
 
     # ── Muted ──
 
