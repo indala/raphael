@@ -26,6 +26,7 @@ def clean_state(monkeypatch):
 
 
 def make_detector(wake_required: bool, transcribe=None):
+    state.wake_word_required = wake_required
     d = GatedDetector(batch_backends=["fake"])
     d._wake_required = wake_required
     d._armed = not wake_required
