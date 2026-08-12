@@ -960,9 +960,7 @@ class RaphaelController(QObject):
                 break
 
         if state.wake_word_required and not wake_detected:
-            # The VAD-gated pipeline enforces the wake word itself; commands
-            # it emits (wake_handled) must not be re-gated on the wake text.
-            if getattr(self.vad_detector, "wake_handled", False):
+            if self._gated_vad or getattr(self.vad_detector, "wake_handled", False) or getattr(self.vad_detector, "_armed", False):
                 logger.debug("Gated pipeline already handled wake word; accepting command")
             else:
                 if getattr(config, "STT_LOG_IGNORED", False):

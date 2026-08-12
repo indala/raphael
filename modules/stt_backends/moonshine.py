@@ -23,6 +23,8 @@ def _check_moonshine() -> bool:
     global _MOONSHINE_AVAILABLE
     if _MOONSHINE_AVAILABLE is None:
         try:
+            import os
+            os.environ.setdefault("KERAS_BACKEND", "torch")
             import moonshine  # useful-sensors-moonshine package
             _MOONSHINE_AVAILABLE = True
         except ImportError:
@@ -64,8 +66,12 @@ class MoonshineBackend(STTBackend):
         """Pre-warm model in background thread to eliminate first-call load lag."""
         try:
             self._ensure_model_loaded()
+            import numpy as np
+            # Warm up neural network weights with dummy silence
+            if self._model is not None:
+                self._model.transcribe(np.zeros((1, 16000), dtype=np.float32), self._model_name)
         except Exception as e:
-            logger.debug("Moonshine prewarm error: %s", e)
+            logger.debug("Moonshine prewarm note: %s", e)
 
     def _ensure_model_loaded(self):
         """Lazy-load Moonshine model."""
@@ -122,7 +128,8 @@ class MoonshineBackend(STTBackend):
 
             # useful-sensors-moonshine API: moonshine.transcribe(audio_data, model_name)
             assert self._model is not None
-            results = self._model.transcribe(audio_float32, self._model_name)
+            audio_2d = np.atleast_2d(audio_float32)
+            results = self._model.transcribe(audio_2d, self._model_name)
             if isinstance(results, list):
                 text = " ".join([r.strip() if isinstance(r, str) else str(r) for r in results]).strip()
             else:

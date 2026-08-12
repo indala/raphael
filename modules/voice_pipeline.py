@@ -302,7 +302,7 @@ class GatedDetector:
 
         self._wake_required = bool(state.wake_word_required)
         self._armed = not self._wake_required
-        self.wake_handled = self._wake_required  # pipeline owns the gate in wake mode
+        self.wake_handled = True  # Gated pipeline owns wake gate management
         self._buf = []
         self._in_speech = False
         self._silence = 0
