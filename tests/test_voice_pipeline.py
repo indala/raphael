@@ -29,7 +29,7 @@ def make_detector(wake_required: bool, transcribe=None):
     d = GatedDetector(batch_backends=["fake"])
     d._wake_required = wake_required
     d._armed = not wake_required
-    d.wake_handled = wake_required
+    d.wake_handled = True
     d._wake_words = ["hey raphael", "raphael"]
     if transcribe is not None:
         d._transcribe = transcribe
