@@ -437,9 +437,12 @@ class GatedDetector:
         if self._wake_required and not self._armed:
             if self._too_long or blocks > self._probe_max_frames:
                 return False  # too long to be a wake word
+            # HUD lights up while the wake probe is being transcribed
+            self._emit_state("LISTENING")
             text = self._transcribe(audio)
             matched, word = self._match_wake(text)
             if not matched:
+                self._emit_state("SLEEPING")  # not a wake word — back to sleep
                 return False
             remaining = self._strip_wake(text, word)
             if remaining:

@@ -148,6 +148,44 @@ def test_wake_plus_command_in_single_utterance():
     assert d._armed is False
 
 
+def test_state_goes_listening_during_wake_probe_stt():
+    # The HUD must flip SLEEPING → LISTENING while the wake probe is being
+    # transcribed (i.e. during the STT call), not only after it matches.
+    d = make_detector(wake_required=True, transcribe=lambda a: "hey raphael")
+    states = []
+    d.set_state_callback(states.append)
+
+    feed_utterance(d, 12)
+
+    assert d._armed is True
+    assert "LISTENING" in states  # emitted during/after probe transcription
+
+
+def test_state_returns_to_sleep_when_probe_is_not_wake_word():
+    # Non-matching probe: LISTENING is shown during STT, then SLEEPING again.
+    d = make_detector(wake_required=True, transcribe=lambda a: "some ambient noise")
+    states = []
+    d.set_state_callback(states.append)
+
+    feed_utterance(d, 12)
+
+    assert d._armed is False
+    assert d.transcript_queue.empty()
+    assert "LISTENING" in states
+    assert states[-1] == "SLEEPING"
+
+
+def test_state_listening_for_wake_plus_command():
+    d = make_detector(wake_required=True, transcribe=lambda a: "hey raphael open notepad")
+    states = []
+    d.set_state_callback(states.append)
+
+    feed_utterance(d, 15)
+
+    assert d.transcript_queue.get() == "open notepad"
+    assert "LISTENING" in states  # HUD stays listening through the command push
+
+
 def test_long_probe_not_treated_as_wake():
     d = make_detector(wake_required=True, transcribe=lambda a: "a long rambling speech")
 

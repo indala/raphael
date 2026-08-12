@@ -35,7 +35,11 @@ sounddevice>=0.4.6      # Audio playback (PortAudio bindings)
 miniaudio>=1.7.0        # MP3 decoding (edge-tts fallback)
 
 # ── Voice — STT ──────────────────────────────────────────────────────
-useful-moonshine>=0.0.3       # Fast edge/CPU offline speech-to-text engine
+# useful-moonshine>=0.0.3  DISABLED: hard-pins torch==2.4.1 and
+# tokenizers==0.20.0 — neither ships a Python 3.14 (cp314) Windows wheel,
+# so this line breaks `pip install -r requirements.txt` entirely.
+# The MoonshineBackend (modules/stt_backends/moonshine.py) degrades
+# gracefully when the package is absent.
 
 # ── Desktop GUI (HUD) ───────────────────────────────────────────────
 PyQt6>=6.7.0            # HUD overlay (main window, canvas, log widget)
