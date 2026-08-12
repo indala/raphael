@@ -210,8 +210,24 @@ class SystemPromptBuilder:
     @staticmethod
     def _build_tool_guide() -> str:
         """Build the tool bullet list from _TOOL_GUIDE, dropping any name that is
-        not actually registered so the prompt can never reference phantom tools."""
-        from orchestrator.tools import get_tool_map
+        not actually registered so the prompt can never reference phantom tools.
+        
+        Task 9: Cache the result via CacheManager with tool registry version.
+        Automatically invalidates when tools are reloaded.
+        """
+        from orchestrator.cache_manager import get_cache_manager
+        from orchestrator.tools import get_tool_map, get_tool_registry_version
+
+        cache = get_cache_manager()
+        registry_version = get_tool_registry_version()
+        
+        # Set version for the tool_guide namespace
+        cache.set_version("tool_guide", registry_version)
+        
+        # Try to get from cache
+        cached = cache.get("tool_guide", "guide_text")
+        if cached is not None:
+            return cached
 
         registered = get_tool_map()
         lines = []
@@ -223,7 +239,11 @@ class SystemPromptBuilder:
                 )
             if existing:
                 lines.append(f"• {label} → {', '.join(existing)}")
-        return "\n".join(lines) + "\n"
+        
+        result = "\n".join(lines) + "\n"
+        # Cache with no TTL (expires only on version change)
+        cache.set("tool_guide", "guide_text", result)
+        return result
 
     @staticmethod
     def _build_security_section() -> str:

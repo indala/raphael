@@ -19,6 +19,7 @@ _TOOL_MODULES: list = []
 _TOOL_MAP: dict[str, Callable] = {}
 _filtered_schema_cache: dict[tuple[str, ...], list[dict]] = {}
 _tools_initialized: bool = False
+_tool_registry_version: int = 0
 
 _NATIVE_MODULE_NAMES = [
     "memory", "clipboard", "system", "tts", "chart", "web", "files",
@@ -116,21 +117,55 @@ def reset_mcp_tools():
 
 
 # ── Parallel-safe tools ────────────────────────────────────────────
+# Task 15: Expanded set of tools safe for parallel execution.
+# These tools have no shared state or side effects that would cause
+# race conditions when executed concurrently.
 PARALLEL_SAFE_TOOLS: set[str] = {
+    # Search & Web
     "web_search", "web_fetch", "web_fetch_multi",
     "get_weather",
+    
+    # File I/O (read-only operations)
     "process_file", "analyze_image", "read_file",
+    "save_output",
+    
+    # Memory & Knowledge
     "recall_memory", "list_memories",
-    "capture_screen", "read_clipboard",
+    "search_knowledge", "query_knowledge",
+    
+    # Screen & UI (read-only)
+    "capture_screen", "desktop_snapshot_v2", "desktop_taskbar",
+    "read_clipboard",
     "list_agents", "list_workflows",
+    
+    # Stock/Finance (read-only)
     "list_stocks", "get_stock_data",
     "get_current_song",
-    "list_goals",
-    "save_output",
+    
+    # Goals & Tasks (read-only)
+    "list_goals", "list_tasks",
+    "check_task",
+    
+    # System Info (read-only)
+    "desktop_processes", "desktop_system_info", "desktop_network",
+    "desktop_environment",
     "service_list", "env_get",
+    
+    # Keyboard State (read-only)
     "key_is_pressed", "caps_lock_state", "num_lock_state",
+    
+    # Monitor Info (read-only)
     "monitor_get_dpi", "get_brightness",
     "recycle_bin_get",
+    
+    # Audio (read-only)
+    "get_system_volume",
+    
+    # Music (read-only playlist/song data, not playback control)
+    "list_local_songs",
+    
+    # Email (read-only)
+    "read_inbox", "search_emails",
 }
 
 
@@ -221,8 +256,19 @@ def is_generated_tool(name: str) -> bool:
 
 def reload_tools():
     """Re-scan native and generated tool directories, re-import all modules."""
+    global _tool_registry_version
     invalidate_tool_cache()
+    _tool_registry_version += 1  # Bump version on reload
     _ensure_tools_loaded()
+
+
+def get_tool_registry_version() -> int:
+    """Get the current tool registry version (Task 9).
+    
+    Used by CacheManager to invalidate caches when tools are reloaded.
+    Increments each time reload_tools() is called.
+    """
+    return _tool_registry_version
 
 
 def __getattr__(name: str):
@@ -240,6 +286,7 @@ def __getattr__(name: str):
 __all__ = [
     "get_filtered_schemas",
     "get_tool_map",
+    "get_tool_registry_version",
     "get_tool_schemas",
     "invalidate_tool_cache",
     "is_generated_tool",

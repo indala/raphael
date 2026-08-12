@@ -51,6 +51,7 @@ class BackgroundTask:
     finished:  float | None = None
     future:    Future | None = field(default=None, repr=False, compare=False)
     current_action: str | None = None
+    task_origin: str = "user"  # Task 7: origin of task (user|proactive|background)
 
     @property
     def elapsed(self) -> float | None:

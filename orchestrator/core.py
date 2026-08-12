@@ -49,6 +49,7 @@ from orchestrator.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
+from orchestrator.baseline import baseline_timed
 from orchestrator.log_utils import (
     clear_request_id,
     finalize_timeline,
@@ -132,6 +133,7 @@ class LLMClient:
 
         self._auth_failed_backends: set[str] = set()
 
+    @baseline_timed("routing")
     def _resolve_endpoint(self, name: str):
         """Resolve an endpoint by name, falling back to the highest-priority configured endpoint."""
         from orchestrator.endpoint_registry import all as _all_eps
@@ -928,6 +930,7 @@ class ToolExecutor:
                 del cls._result_cache[k]
             return len(keys)
 
+    @baseline_timed("tool_exec")
     def execute(self, tool_name: str, args: dict) -> str:
         """Execute a tool and return its result as a string.
 
@@ -1185,24 +1188,72 @@ class RaphaelOrchestrator:
         self._context_engine = engine
         logger.info("Context engine set to %s", type(engine).__name__)
 
+    @baseline_timed("prompt_build")
     def _get_system_prompt(self, user_query: str = "", task_context: str = "") -> dict:
-        """Dynamically generate the system prompt using SystemPromptBuilder."""
+        """Dynamically generate the system prompt using SystemPromptBuilder.
+        
+        Task 10: Split static (tool guide, policies) and dynamic (memory, time, task) parts.
+        Static parts are cached; only dynamic parts recompute per request.
+        """
+        from orchestrator.cache_manager import get_cache_manager
+        from orchestrator.prompt_builder import SystemPromptBuilder
+        import datetime
+        
+        cache = get_cache_manager()
+        
+        # Static prompt (cached, invalidated only on tool registry change or config reload)
+        static_prompt = cache.get("system_prompt", "static")
+        if static_prompt is None:
+            from orchestrator.tools import get_tool_registry_version
+            cache.set_version("system_prompt", get_tool_registry_version())
+            # Build static sections (tool guide, policies, security, failure handling, etc.)
+            static_prompt = (
+                SystemPromptBuilder._build_identity_section("", "")  # Will be filled in dynamic
+                + SystemPromptBuilder._build_reasoning_section()
+                + SystemPromptBuilder._build_tool_policies_section()
+                + SystemPromptBuilder._build_tool_guide()
+                + SystemPromptBuilder._build_security_section()
+                + SystemPromptBuilder._build_failure_section()
+                + SystemPromptBuilder._build_delegation_section()
+            )
+            cache.set("system_prompt", "static", static_prompt)
+        
+        # Dynamic prompt (computed fresh each request: timestamp, memory, task context)
+        # Task 12: Parallelize memory reads using concurrent.futures
+        import concurrent.futures
+        
+        def _fetch_user_memory():
+            """Fetch user-relevant memory context."""
+            try:
+                from orchestrator.memory_agent import get_relevant_context
+                return get_relevant_context(user_query)
+            except Exception as e:
+                logger.error("Failed to load memory context: %s", e)
+                return ""
+        
+        def _fetch_raphael_memory():
+            """Fetch Raphael's own evolution memory (learned rules from corrections)."""
+            try:
+                from memory.agent_memory import get_context
+                return get_context("raphael", user_query)
+            except Exception as e:
+                logger.debug("Failed to load Raphael evolution context: %s", e)
+                return ""
+        
+        # Fetch both in parallel with bounded thread pool (max 2 workers)
         memory_context = ""
-        try:
-            from orchestrator.memory_agent import get_relevant_context
-            memory_context = get_relevant_context(user_query)
-        except Exception as e:
-            logger.error("Failed to load memory context: %s", e)
-
-        # Load Raphael's own evolution memory (learned rules from corrections)
         raphael_context = ""
         try:
-            from memory.agent_memory import get_context
-            raphael_context = get_context("raphael", user_query)
-        except Exception as e:
-            logger.debug("Failed to load Raphael evolution context: %s", e)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                user_mem_future = executor.submit(_fetch_user_memory)
+                raphael_mem_future = executor.submit(_fetch_raphael_memory)
+                memory_context = user_mem_future.result(timeout=5.0)
+                raphael_context = raphael_mem_future.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("Memory context fetch timeout (5s)")
+            memory_context = memory_context or ""
+            raphael_context = raphael_context or ""
 
-        import datetime
         now = datetime.datetime.now()
         date_str = now.strftime("%A, %B %d, %Y")
         time_str = now.strftime("%I:%M %p")
@@ -1212,19 +1263,23 @@ class RaphaelOrchestrator:
         tts_ok = state.tts_enabled
         mic_ok = state.audio_input_available
 
-        from orchestrator.prompt_builder import SystemPromptBuilder
-        content = SystemPromptBuilder.build(
-            date_str=date_str,
-            time_str=time_str,
-            spk_ok=spk_ok,
-            tts_ok=tts_ok,
-            mic_ok=mic_ok,
-            memory_context=memory_context,
-            raphael_context=raphael_context,
-            screenshot_dir=getattr(config, 'SCREENSHOT_DIR', 'outputs'),
-            task_context=task_context,
+        # Build dynamic sections
+        dynamic_prompt = (
+            SystemPromptBuilder._build_identity_section(date_str, time_str)
+            + SystemPromptBuilder._build_context_section(
+                user_query, memory_context, raphael_context,
+                spk_ok, tts_ok, mic_ok
+            )
+            + SystemPromptBuilder._build_output_and_knowledge_section(
+                getattr(config, 'SCREENSHOT_DIR', 'outputs')
+            )
         )
-
+        
+        # Combine static + dynamic
+        content = dynamic_prompt + static_prompt
+        if task_context:
+            content += f"\n=== TASK CONTEXT ===\n{task_context}\n"
+        
         return {"role": "system", "content": content}
 
     @property
@@ -1521,6 +1576,7 @@ class RaphaelOrchestrator:
 
         return None
 
+    @baseline_timed("total_turn")
     def process_message(self, user_input: str, file_path: str | None = None) -> str:
         """
         Process a user message through the LLM loop.
@@ -1936,12 +1992,18 @@ class RaphaelOrchestrator:
 
         self.history.append({"role": "user", "content": user_input})
 
-        # Limit history
-        if len(self.history) > config.MAX_HISTORY * 2:
-            self.history = self.history[-config.MAX_HISTORY * 2:]
+        # ── Transcript Durability: Write user message BEFORE LLM call ──
+        # If the process crashes during LLM execution, the user message is
+        # preserved in history and can be resumed. Pattern from openclaude.
+        self._persist_history()
+
+        # Compact history (intelligent summarization instead of truncation)
+        self._compact_history()
 
         log_event("System Prompt Build")
-        messages = [self._get_system_prompt(user_input), *self.history]
+        messages = [self._get_system_prompt(user_input), *self._context_engine.select_context(
+            user_input, self.history, config.MAX_HISTORY
+        )]
 
         # Pre-flight sanitization: close interrupted tool sequences, strip
         # orphaned tool results, repair null assistant turns.

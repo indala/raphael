@@ -14,6 +14,7 @@ from typing import Any
 from PyQt6.QtCore import QPoint, QTimer, QObject, pyqtSignal
 
 import config
+from controller.processing_lanes import ProcessingLanes
 from controller.state import state
 from orchestrator.proactive_engine import ProactiveEngine
 from orchestrator.startup import StartupManager
@@ -100,8 +101,11 @@ class RaphaelController(QObject):
         self.ui = ui
         self.raphael = None  # built in background thread — see _build_orchestrator
         self.vad_detector = None
-        self._processing = False
-        self._processing_lock = threading.Lock()
+        # Processing-state contract (three lanes): the controller's
+        # "processing" flag means USER LLM work only — proactive and
+        # background work run in their own lanes (ProcessingLanes) and
+        # never flip it, so the mic and chat stay responsive.
+        self._lanes = ProcessingLanes()
         self._bg_response_queue: queue.Queue = queue.Queue()
         self._current_file = ""
         self._last_tts_end_time = time.time()
@@ -260,7 +264,10 @@ class RaphaelController(QObject):
         self.raphael.executor.confirmation_provider = self._request_confirmation
 
     def _init_phase2(self):
-        """Audio system state — COM bridge calls that may block briefly."""
+        """Audio system state — COM bridge calls that may block briefly.
+        
+        Task 17: Phase 1 of two-phase eager tool loading starts here (frequent tools).
+        """
         # ── Detect physical speaker before querying audio state ──
         has_physical_spk = detect_physical_speaker()
         if not has_physical_spk:
@@ -377,20 +384,68 @@ class RaphaelController(QObject):
         # Done loading - transition to main window!
         self.ui.update_splash(100, "Done")
         QTimer.singleShot(200, self.ui.close_splash_and_show_main)
+        
+        # Task 17: Phase 2 of two-phase eager tool loading (background load of remaining tools)
+        threading.Thread(target=self._eager_load_tools_phase2, daemon=True).start()
+
+    def _eager_load_tools_phase2(self):
+        """Task 17: Background phase of two-phase tool loading.
+        
+        Phase 1 (sync): Frequent tools (web_search, read_file, capture_screen)
+        are loaded eagerly during _build_orchestrator() to reduce first query latency.
+        
+        Phase 2 (async): Remaining tools are loaded in background after UI is visible,
+        avoiding startup delay while maintaining cache warmth for future queries.
+        """
+        try:
+            import logging as log_module
+            logger_phase2 = log_module.getLogger(__name__)
+            
+            # Trigger tool registry to ensure all tools are imported and cached
+            from orchestrator.tools import get_tool_schemas, get_tool_map
+            from orchestrator.log_utils import log_prefixed, LOG_PREFIX_PARALLEL
+            
+            log_prefixed(LOG_PREFIX_PARALLEL, log_module.DEBUG, "Phase 2: Starting background tool preload")
+            
+            # Load all tool schemas and the full tool map (this triggers lazy imports)
+            schemas = get_tool_schemas()
+            tool_map = get_tool_map()
+            
+            log_prefixed(
+                LOG_PREFIX_PARALLEL, log_module.INFO,
+                "Phase 2: Preloaded %d tool schemas + %d tool implementations",
+                len(schemas), len(tool_map)
+            )
+            
+            # Warm up cached schemas for next query
+            from orchestrator.cache_manager import get_cache_manager
+            cache = get_cache_manager()
+            cache_stats = cache.stats()
+            log_prefixed(
+                LOG_PREFIX_PARALLEL, log_module.DEBUG,
+                "Cache state: %d entries, hit_rate=%.1f%%",
+                cache_stats.get("cache_size", 0),
+                cache_stats.get("hit_rate_percent", 0)
+            )
+        except Exception as e:
+            logger.warning("Phase 2 eager tool loading failed: %s", e)
 
     # ── Processing state ─────────────────────────────────────────
 
     def _is_processing(self) -> bool:
-        """Check if currently processing a request."""
-        return self._processing
+        """True only while USER work is running (proactive/bg never count)."""
+        return self._lanes.is_user_processing()
 
     def _set_processing(self, value: bool) -> None:
-        """Set the processing state (thread-safe — defers GUI work to main thread)."""
-        self._processing = value
+        """Enter/leave the USER lane (thread-safe — defers GUI work to main thread)."""
+        if value:
+            self._lanes.begin_user()
+        else:
+            self._lanes.end_user()
         # Timer start/stop MUST happen on the GUI thread.  When called from a
-        # background thread (e.g. EventBus handler or _submit_proactive), Qt
-        # would emit QBasicTimer warnings and the processing state could get
-        # stuck.  Use singleShot(0, …) to always run on the main event loop.
+        # background thread (e.g. EventBus handler), Qt would emit
+        # QBasicTimer warnings and the processing state could get stuck.
+        # Use singleShot(0, …) to always run on the main event loop.
         QTimer.singleShot(0, lambda v=value: self._apply_processing_state(v))
         self.signals.processing_state_changed.emit(value)
 
@@ -420,6 +475,8 @@ class RaphaelController(QObject):
             logger.debug("Failed to update task badge in GUI: %s", e)
 
     def _handle_task_finished_gui(self, data: dict):
+        # Only USER-lane work queues background results — proactive/background
+        # lanes deliver immediately (Task 2 contract).
         if self._is_processing():
             self._bg_response_queue.put(data)
             logger.info("Raphael is busy, queued background response for task %s", data.get("task_id"))
@@ -442,7 +499,9 @@ class RaphaelController(QObject):
             self.ui.write_log("sys", f"[BG:{task_id}] {label} — FAILED")
             self.ui.write_log("err", error or "Unknown error")
 
-        self._set_processing(True)
+        # Background results should never flip the processing flag (Task 5).
+        # TTS queue is already serialized by the worker thread; no need to
+        # set processing. User always wins if they submit while BG is speaking.
         if state.tts_enabled:
             self.ui.set_state("SPEAKING")
             self._tts_queue.put((text, lambda: self.signals.processing_done.emit()))
@@ -1150,28 +1209,38 @@ class RaphaelController(QObject):
         threading.Thread(target=self._process_llm, args=(text, self._current_file), daemon=True).start()
 
     def _submit_proactive(self, instruction: str):
-        """Submit a proactive check-in to the LLM (read-only, no tools)."""
-        if self._is_processing() or state.muted or not self.raphael:
+        """Submit a proactive check-in to the LLM (read-only, no tools).
+
+        Runs in the proactive lane: never flips the user-lane processing
+        flag, so the mic and chat stay responsive. The result carries the
+        lane generation captured at start; if the user takes over (or a
+        newer proactive round begins) before it lands, it is discarded.
+        """
+        if self._lanes.is_user_processing() or state.muted or not self.raphael:
             self.proactive_engine.on_check_complete()
             return
 
         def _run():
             try:
                 assert self.raphael is not None
-                self._set_processing(True)
-                response = self.raphael.process_message(instruction)
-                self.proactive_engine.on_check_complete()
-                if response and response.strip().lower() != "__noop__":
-                    if state.tts_enabled and not state.muted:
-                        from modules.tts import speak
-                        self._recent_spoken_texts.append(response)
-                        speak(response)
-                    self.ui.write_log("ai", f"[Proactive] {response}")
-                self._set_processing(False)
+                gen = self._lanes.begin_proactive()
+                try:
+                    response = self.raphael.process_message(instruction)
+                    self.proactive_engine.on_check_complete()
+                    if self._lanes.is_stale("proactive", gen):
+                        logger.debug("Proactive result discarded (superseded generation)")
+                        return
+                    if response and response.strip().lower() != "__noop__":
+                        if state.tts_enabled and not state.muted:
+                            from modules.tts import speak
+                            self._recent_spoken_texts.append(response)
+                            speak(response)
+                        self.ui.write_log("ai", f"[Proactive] {response}")
+                finally:
+                    self._lanes.end_proactive()
             except Exception as e:
                 logger.debug("Proactive check failed: %s", e)
                 self.proactive_engine.on_check_complete()
-                self._set_processing(False)
 
         threading.Thread(target=_run, daemon=True, name="proactive").start()
 

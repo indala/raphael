@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "custom_intents": [
+    {
+      "name": "greeting",
+      "patterns": [
+        "^\\s*(hello|hi|hey|greetings)\\s*$",
+        "^\\s*(good morning|good afternoon|good evening)\\s*$"
+      ],
+      "response": "Hello! I'm Raphael, your AI assistant. How can I help you today?"
+    },
+    {
+      "name": "bye",
+      "patterns": [
+        "^\\s*(bye|goodbye|see you|farewell)\\s*$",
+        "^\\s*(talk to you later|ttyl|catch you later)\\s*$"
+      ],
+      "response": "Goodbye! Feel free to ask me anything anytime."
+    },
+    {
+      "name": "thanks",
+      "patterns": [
+        "^\\s*(thanks|thank you|appreciate it)\\s*$",
+        "^\\s*(thank you.*helpful)\\s*$"
+      ],
+      "response": "You're welcome! Happy to help."
+    },
+    {
+      "name": "custom_greeting_morning",
+      "patterns": [
+        "^\\s*(morning|rise and shine)\\s*$"
+      ],
+      "response": "Good morning! Ready to tackle the day?",
+      "conditions": {
+        "hour_range": [6, 12]
+      }
+    },
+    {
+      "name": "custom_greeting_evening",
+      "patterns": [
+        "^\\s*(evening|night)\\s*$"
+      ],
+      "response": "Good evening! Winding down for the day?",
+      "conditions": {
+        "hour_range": [17, 23]
+      }
+    }
+  ],
+  "disabled_intents": [],
+  "intent_priorities": {
+    "stop": 100,
+    "mute": 95,
+    "unmute": 95,
+    "greeting": 10,
+    "bye": 10,
+    "thanks": 5
+  },
+  "metadata": {
+    "description": "User-defined custom intents for fast-path handling (Task 16)",
+    "last_updated": "2026-08-12",
+    "author": "User",
+    "note": "Add custom intents here to extend the local intent fast path without modifying code. Patterns are regex strings (case-insensitive by default when used in local_intents.py)."
+  }
+}

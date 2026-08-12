@@ -2,8 +2,12 @@
 Logging utilities for Raphael — request correlation IDs, structured events.
 
 Provides:
-  - RequestIDFilter: injects [req=<uuid>] into every log record
+  - RequestIDFilter: injects [req=<uuid>] [phase=user|proactive|background]
+    into every log record
   - set_request_id / get_request_id / clear_request_id: contextvar-based
+  - set_phase / get_phase / clear_phase: processing-lane context (the
+    three-lane contract: user / proactive / background)
+  - log_prefixed: log under a stable subsystem prefix constant
   - log_event: high-level lifecycle event logging with timing
 """
 
@@ -13,19 +17,66 @@ from contextvars import ContextVar
 from uuid import uuid4
 
 _request_id: ContextVar[str] = ContextVar("request_id", default="")
+_phase: ContextVar[str] = ContextVar("phase", default="user")
 _event_timeline: ContextVar[list[tuple[str, float]]] = ContextVar("event_timeline", default=None)  # type: ignore[arg-type]
 
 logger = logging.getLogger(__name__)
 
+# ── Log Prefix Constants ───────────────────────────────────────────
+# Stable per-subsystem prefixes (Task 1). Every subsystem logs through
+# these so lines are greppable: grep "[CACHE]" logs/raphael.log
+LOG_PREFIX_CACHE = "[CACHE]"
+LOG_PREFIX_PARALLEL = "[PARALLEL]"
+LOG_PREFIX_INTENT = "[INTENT]"
+LOG_PREFIX_PROACTIVE = "[PROACTIVE]"
+LOG_PREFIX_PRIORITY = "[PRIORITY]"
+LOG_PREFIX_ROUTING = "[ROUTING]"
+LOG_PREFIX_PROMPT = "[PROMPT]"
+
+
+def log_prefixed(prefix: str, level: int, msg: str, *args) -> None:
+    """Log *msg* (%-formatted with *args*) under a subsystem *prefix*.
+
+    Example:
+        log_prefixed(LOG_PREFIX_CACHE, logging.INFO, "hit key=%s", key)
+    """
+    logger.log(level, "%s %s", prefix, msg % args if args else msg)
+
 
 class RequestIDFilter(logging.Filter):
-    """Logging filter that appends [req=<uuid>] to every record with an active request."""
+    """Filter that appends [req=<uuid>] [phase=<lane>] to every record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        tags = []
         rid = _request_id.get()
         if rid:
-            record.msg = f"[req={rid}] {record.msg}"
+            tags.append(f"[req={rid}]")
+        tags.append(f"[phase={_phase.get()}]")
+        if tags and not str(record.msg).startswith(tags[0]):
+            record.msg = f"{' '.join(tags)} {record.msg}"
         return True
+
+
+def set_phase(phase: str) -> str:
+    """Set the processing-lane phase for the current context.
+
+    One of "user" | "proactive" | "background" (defaults to "user").
+    Returns the phase that was set.
+    """
+    if phase not in ("user", "proactive", "background"):
+        raise ValueError(f"unknown phase: {phase!r}")
+    _phase.set(phase)
+    return phase
+
+
+def get_phase() -> str:
+    """Return the current phase, or 'user' if none was set."""
+    return _phase.get()
+
+
+def clear_phase() -> None:
+    """Reset the phase to the default 'user'."""
+    _phase.set("user")
 
 
 def set_request_id() -> str:

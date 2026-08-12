@@ -113,6 +113,13 @@ PROACTIVE_REMINDERS_ENABLED = True
 # Storage location for proactive engine data
 PROACTIVE_STORAGE_DIR = DATA_DIR / "proactive"
 
+# ── Performance Baseline ──
+# When True, the LLM turn pipeline is wrapped in BaselineRecorder, which
+# samples stage timings (total turn, prompt build, routing, tool exec)
+# and writes baseline_YYYYMMDD.json (p50/p95/p99) under DATA_DIR/baselines.
+# Default False — the recorder is a no-op while disabled.
+PERF_BASELINE_ENABLED = False
+
 # ── Cron Scheduler ──
 # Background job scheduler inspired by hermes-agent/cron/
 # Jobs are defined in _user_settings/cron/jobs.json
@@ -249,6 +256,39 @@ MAX_TOOL_RESULT_CHARS = 5000
 LLM_READ_TIMEOUT = 180
 LLM_CONNECT_TIMEOUT = 10
 LLM_RETRY_BACKOFF = 1.5
+
+# ============================================================
+# Task 11: Write-Invalidation Map & Background Cooldown
+# ============================================================
+# Cache invalidation triggers: when certain tools are executed, which caches
+# should be invalidated? Maps tool name → list of cache namespaces to clear.
+# Used by agent_orchestrator to invalidate routing cache when context changes.
+WRITE_INVALIDATION_MAP = {
+    # File operations invalidate all caches (context may have changed)
+    "write_file": ["routing", "memory"],
+    "edit_file": ["routing", "memory"],
+    "save_output": ["routing"],
+    "process_file": ["routing"],
+    # Tool registry changes (add/remove tools) invalidate routing
+    "reload_tools": ["routing", "tool_guide"],
+    # Memory operations invalidate routing cache
+    "save_memory": ["routing", "memory"],
+    "delete_memory": ["routing", "memory"],
+    # Browser/desktop state changes
+    "browser_control": ["routing"],
+    "desktop_snapshot_v2": ["routing"],
+    "launch_app": ["routing"],
+    "run_command": ["routing"],
+    # UI operations
+    "ui_click": ["routing"],
+    "ui_type_text": ["routing"],
+}
+
+# Background task execution constraints (Task 11)
+BACKGROUND_COOLDOWN_SECONDS = 30  # Min time between background task submissions
+BACKGROUND_MAX_CONCURRENT = 3  # Max concurrent background tasks
+BACKGROUND_TASK_TIMEOUT = 300  # Timeout for background tasks (seconds)
+BACKGROUND_RESULT_DELIVERY_DELAY = 1.0  # Delay before delivering BG result to UI (seconds)
 
 # ============================================================
 # Overlay user settings from settings.toml (user data dir)
