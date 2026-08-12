@@ -1,7 +1,7 @@
 """Tests for Phase 3: Local intent fast path."""
 
 import unittest
-from orchestrator.local_intents import try_match_intent, INTENT_MATCHERS
+from orchestrator.local_intents import try_match_intent
 
 
 class TestLocalIntents(unittest.TestCase):

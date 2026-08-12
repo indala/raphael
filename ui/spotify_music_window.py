@@ -17,20 +17,19 @@ Features:
 """
 
 import math
-import random
 import logging
 from functools import partial
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QPoint
-from PyQt6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath, QPen
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QLinearGradient, QPainter
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
-    QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+    QMainWindow, QMessageBox, QPushButton, QSlider,
+    QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 )
 
 from audio.music_library import LikedSongsManager, PlaylistManager, RecentlyPlayed
-from audio.music_player import MusicPlayer, PlaybackState, RepeatMode
+from audio.music_player import MusicPlayer, RepeatMode
 
 logger = logging.getLogger(__name__)
 
@@ -955,7 +954,6 @@ class SpotifyMusicWindow(QMainWindow):
 
     def _load_local_library(self):
         try:
-            from orchestrator.tools.native.music_player_tools import scan_local_library
             import config
             music_dir = config.DATA_DIR / "music"
 

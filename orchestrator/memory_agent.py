@@ -16,6 +16,42 @@ from orchestrator.event_payloads import MemoryUpdatedPayload
 
 logger = logging.getLogger(__name__)
 
+# ── JSON Repair Helper ──────────────────────────────────────────────
+def _repair_json(text: str) -> str:
+    """
+    Attempt to repair common malformed JSON issues from LLM output.
+    Handles:
+    - Unescaped quotes inside string values
+    - Single quotes instead of double quotes
+    - Common typos in JSON structure
+    Returns repaired JSON string.
+    """
+    # Remove leading/trailing whitespace
+    text = text.strip()
+
+    # Replace common problematic patterns
+    # 1. Fix single quotes to double quotes (but preserve escaped quotes)
+    text = re.sub(r"'([^']*)'", r'"\1"', text)
+
+    # 2. Fix unescaped double quotes inside values (basic approach)
+    # This regex tries to fix malformed JSON by escaping unescaped quotes
+    # in values (between : and , or })
+    text = re.sub(r':\s*"([^"]*)"([^"]*)"', r': "\1\2"', text)
+
+    # 3. Remove trailing commas before closing braces/brackets
+    text = re.sub(r',(\s*[}\]])', r'\1', text)
+
+    # 4. Fix missing colons in key-value pairs
+    text = re.sub(r'("([^"]+)")\s+("[^"]*")', r'\1: \3', text)
+
+    # 5. Fix null/true/false capitalization issues (JSON standard is lowercase)
+    text = re.sub(r'\bNULL\b', 'null', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bTRUE\b', 'true', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bFALSE\b', 'false', text, flags=re.IGNORECASE)
+
+    return text
+
+
 # ── Context cache ───────────────────────────────────────────────────
 _context_cache: dict[str, tuple[str, float]] = {}
 _CONTEXT_CACHE_TTL = 300.0  # seconds (5 min)
@@ -122,10 +158,10 @@ def get_relevant_context(user_query: str) -> str:
     # ── SQLite FTS5 path ─────────────────────────────────────────
     try:
         from memory.memory_manager import search_memory, load_memory
-        
+
         memory = load_memory()
         user_mem = memory.get("user_memory", {})
-        
+
         # 1. Always include core profile fields
         core_lines = []
         core_fields = ["name", "job", "motto", "city"]
@@ -135,7 +171,7 @@ def get_relevant_context(user_query: str) -> str:
                 val = entry.get("value") if isinstance(entry, dict) else entry
                 if val:
                     core_lines.append(f"{field.title()}: {val}")
-        
+
         # 2. FTS5 search for relevant entries
         search_results = search_memory(user_query, limit=15)
         match_lines = []
@@ -151,7 +187,7 @@ def get_relevant_context(user_query: str) -> str:
                 continue
             prefix = "" if cat == "user_memory" else f"[{cat}] "
             match_lines.append(f"{prefix}{key}: {val}")
-        
+
         # 3. Combine
         lines = []
         if core_lines:
@@ -164,17 +200,17 @@ def get_relevant_context(user_query: str) -> str:
             lines.append("Relevant Context / Saved Details:")
             for line in match_lines:
                 lines.append(f"  - {line}")
-        
+
         if not lines:
             _context_cache[cache_key] = ("", now)
             return ""
-        
+
         header = "[WHAT YOU KNOW ABOUT THE USER -- use naturally, never recite like a list]\n"
         result_text = header + "\n".join(lines) + "\n"
         result_text = sanitize_memory_context(result_text)
         _context_cache[cache_key] = (result_text, now)
         return result_text
-        
+
     except Exception as e:
         logger.debug("FTS context retrieval failed: %s — falling back to keyword", e)
 
@@ -299,7 +335,22 @@ def run_memory_agent(user_text: str, assistant_text: str) -> None:
             text = text.strip()
 
             if text:
-                updates = json.loads(text)
+                try:
+                    updates = json.loads(text)
+                except json.JSONDecodeError as json_err:
+                    # JSON parsing failed — attempt to repair common issues
+                    logger.warning("Memory Organizer JSON parse failed (%s) — attempting repair", json_err)
+                    # Try basic repairs: fix common quote issues
+                    repaired = _repair_json(text)
+                    try:
+                        updates = json.loads(repaired)
+                    except json.JSONDecodeError as repair_err:
+                        logger.error(
+                            "Memory Organizer JSON repair failed: original=%s, repaired=%s",
+                            json_err, repair_err
+                        )
+                        return
+
                 if isinstance(updates, dict) and updates:
                     update_memory(updates)
                     EventBus().publish_typed(
@@ -382,7 +433,22 @@ def consolidate_memory(history: list[dict]) -> None:
             text = text.strip()
 
             if text:
-                consolidated = json.loads(text)
+                try:
+                    consolidated = json.loads(text)
+                except json.JSONDecodeError as json_err:
+                    # JSON parsing failed — attempt to repair common issues
+                    logger.warning("Memory consolidation JSON parse failed (%s) — attempting repair", json_err)
+                    # Try basic repairs: fix common quote issues
+                    repaired = _repair_json(text)
+                    try:
+                        consolidated = json.loads(repaired)
+                    except json.JSONDecodeError as repair_err:
+                        logger.error(
+                            "Memory consolidation JSON repair failed: original=%s, repaired=%s",
+                            json_err, repair_err
+                        )
+                        return
+
                 if isinstance(consolidated, dict) and all(k in consolidated for k in ["user_memory", "daily_task_memory", "chat_memory", "feature_memory"]):
                     from memory.memory_manager import save_memory
                     save_memory(consolidated)

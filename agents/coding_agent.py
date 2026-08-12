@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CODING_TOOLS = [
+    "write_file", "read_file", "edit_file", "list_directory",
     "process_file", "run_system_command", "copy_to_clipboard",
     "read_clipboard", "list_knowledge_files", "read_knowledge_file",
     "web_search", "web_fetch",
@@ -29,6 +30,7 @@ class CodingAgent(BaseAgent):
     name = "coding"
     description = "Write code, process files, run commands, use technical knowledge"
     available_tools = [
+        "write_file", "read_file", "edit_file", "list_directory",
         "process_file", "run_system_command", "copy_to_clipboard",
         "read_clipboard", "list_knowledge_files", "read_knowledge_file",
         "web_search", "web_fetch",
@@ -47,6 +49,10 @@ class CodingAgent(BaseAgent):
             "Use the knowledge base for CLI syntax and package manager commands. "
             "Process files with process_file for images, PDFs, docs, spreadsheets, archives. "
             "For code output, use copy_to_clipboard so the user can paste it easily.\n\n"
+            "FILE EDITING RULE: When asked to fix or edit a file you previously created, "
+            "check the conversation history for the exact file path first. "
+            "Then: (1) read_file to load it, (2) edit_file to patch the bug, done. "
+            "Do NOT use run_system_command to search for the file — use the path from history.\n\n"
             "**Cross-Agent Collaboration:**\n"
             "You can delegate subtasks. Use `list_agents` to see who's available "
             "and `delegate_to_agent(name, query)` to hand off work. For example, delegate "

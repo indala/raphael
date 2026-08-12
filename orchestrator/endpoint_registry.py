@@ -98,11 +98,11 @@ def load() -> list[Endpoint]:
     items = _load_from_settings()
     _loaded = True
     _rebuild_index(items)
-    
+
     # Optional: concurrent health check on startup
     if _should_health_check():
         _concurrent_health_probe(items)
-    
+
     return items
 
 
@@ -126,15 +126,15 @@ def _concurrent_health_probe(endpoints: list[Endpoint]) -> None:
     """
     if not endpoints:
         return
-    
+
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import contextlib
-    
+
     def _probe_one(ep: Endpoint) -> tuple[str, bool]:
         """Probe a single endpoint. Returns (name, is_healthy)."""
         if not ep.base_url:
             return (ep.name, False)
-        
+
         try:
             import httpx
             # Quick health probe: GET /v1/models or just connect test
@@ -145,13 +145,13 @@ def _concurrent_health_probe(endpoints: list[Endpoint]) -> None:
                 headers = {}
                 if ep.api_key:
                     headers["Authorization"] = f"Bearer {ep.api_key}"
-                
+
                 resp = client.get(models_url, headers=headers)
                 is_healthy = resp.status_code in (200, 401, 403)  # 401/403 = auth issue but server is alive
                 return (ep.name, is_healthy)
         except Exception:
             return (ep.name, False)
-    
+
     # Probe all endpoints in parallel
     results: dict[str, bool] = {}
     with ThreadPoolExecutor(max_workers=min(len(endpoints), 8)) as pool:
@@ -160,7 +160,7 @@ def _concurrent_health_probe(endpoints: list[Endpoint]) -> None:
             with contextlib.suppress(Exception):
                 name, healthy = future.result()
                 results[name] = healthy
-    
+
     # Log results
     healthy_count = sum(1 for h in results.values() if h)
     logger.info(
@@ -168,7 +168,7 @@ def _concurrent_health_probe(endpoints: list[Endpoint]) -> None:
         healthy_count, len(endpoints),
         ", ".join(f"{n}:{'✓' if h else '✗'}" for n, h in results.items())
     )
-    
+
     # Store health status on endpoint objects for LLMClient fallback logic
     for ep in endpoints:
         ep._health_checked = True  # type: ignore[attr-defined]

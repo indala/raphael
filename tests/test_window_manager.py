@@ -160,7 +160,7 @@ def test_controller_ui_state_tracking():
     """RaphaelController should track UI state ('window' vs 'floating_icon') and support native tools."""
     from unittest.mock import MagicMock
     from controller.raphael_controller import RaphaelController, get_controller_instance
-    from orchestrator.tools.native.ui import get_raphael_ui_state, show_raphael_window, hide_raphael_window
+    from orchestrator.tools.native.ui import get_raphael_ui_state
 
     mock_ui = MagicMock()
     mock_ui.window = MagicMock()

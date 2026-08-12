@@ -24,9 +24,12 @@ import contextlib
 
 import config
 from controller.state import state
+from orchestrator.model_state_manager import get_model_state_manager
+
+MODEL_STATE_TRACKING_ENABLED = config.MODEL_STATE_TRACKING_ENABLED
 from orchestrator.background import BackgroundTask, init_runner
 from orchestrator.background_reviewer import spawn_background_review
-from orchestrator.context_scrubber import scrub_stream, scrub_text
+from orchestrator.context_scrubber import scrub_text
 from orchestrator.message_sanitizer import sanitize_history
 from orchestrator.event_adapter import stream_with_events
 from orchestrator.event_bus import (
@@ -336,6 +339,12 @@ class LLMClient:
         if main_id and TaskManager.is_cancelled(main_id):
             raise RuntimeError("Task cancelled by user")
 
+        # Task 19: Track model state (health, rate limits, dedup)
+        if MODEL_STATE_TRACKING_ENABLED:
+            mgr = get_model_state_manager()
+            if self.backend and self.model:
+                mgr.record_success(self.backend, self.model)
+
         kwargs = {
             "model": self.vision_model if use_vision_model else self.model,
             "messages": messages,
@@ -348,7 +357,7 @@ class LLMClient:
         log_event("LLM Call", f"reason={reason} {backend_label}")
 
         # Inject Anthropic prompt-cache breakpoints when enabled
-        from orchestrator.prompt_caching import build_prompt_cache_plan, strip_cache_control
+        from orchestrator.prompt_caching import build_prompt_cache_plan
         _ep_base_url = getattr(self._ep, "base_url", "")
         _cached_messages = build_prompt_cache_plan(
             kwargs["messages"], base_url=_ep_base_url, model=str(kwargs["model"])
@@ -383,6 +392,12 @@ class LLMClient:
                 is_auth_error = "401" in error_str or "unauthorized" in error_str
                 if is_auth_error:
                     self._auth_failed_backends.add(self.backend)
+                if error_str and "429" in error_str:
+                    # Task 19: Record rate limit
+                    if self.backend:
+                        mgr = get_model_state_manager()
+                        retry_after = int(e.response.headers.get("retry-after", 0)) if hasattr(e, "response") else None
+                        mgr.record_rate_limit(self.backend, retry_after)
                 is_retryable = any(
                     phrase in error_str
                     for phrase in ["timeout", "timed out", "503", "502", "504",
@@ -423,6 +438,9 @@ class LLMClient:
                         last_error = str(e)
                         if "401" in last_error or "unauthorized" in last_error.lower():
                             self._auth_failed_backends.add(self.backend)
+                            if self.backend:
+                                mgr = get_model_state_manager()
+                                mgr.record_failure(self.backend, "401")
                             break
                         if attempt >= 1:
                             break
@@ -462,11 +480,35 @@ class LLMClient:
                         logger.info("Fallback backend '%s' succeeded after primary failure (reason=%s)", fb, reason)
                         from orchestrator.token_tracker import get_tracker
                         get_tracker().record(response, backend=fb, model=str(kwargs["model"]), reason=reason)
+                        if self.backend and kwargs["model"]:
+                            mgr = get_model_state_manager()
+                            mgr.record_success(self.backend, kwargs["model"])
                         return msg  # type: ignore[return-value]
                     except Exception as e:
                         last_error = str(e)
                         if "401" in last_error or "unauthorized" in last_error.lower():
                             self._auth_failed_backends.add(fb)
+                            if fb:
+                                mgr = get_model_state_manager()
+                                mgr.record_failure(fb, "401")
+                            break
+                        if "403" in last_error or "forbidden" in last_error.lower():
+                            self._auth_failed_backends.add(fb)
+                            if fb:
+                                mgr = get_model_state_manager()
+                                mgr.record_failure(fb, "403")
+                            break
+                        if "404" in last_error or "not found" in last_error.lower():
+                            self._auth_failed_backends.add(fb)
+                            if fb:
+                                mgr = get_model_state_manager()
+                                mgr.record_failure(fb, "404")
+                            break
+                        if "503" in last_error or "502" in last_error or "504" in last_error.lower():
+                            self._auth_failed_backends.add(fb)
+                            if fb:
+                                mgr = get_model_state_manager()
+                                mgr.record_failure(fb, "503")
                             break
                         if attempt >= 1:
                             break
@@ -554,7 +596,7 @@ class LLMClient:
                 # Wrap streaming in context scrubber to prevent tag leakage
                 from orchestrator.context_scrubber import StreamingContextScrubber
                 scrubber = StreamingContextScrubber()
-                
+
                 def _token_generator():
                     for chunk in response:
                         if len(chunk.choices) == 0:  # type: ignore[attr-defined]
@@ -564,7 +606,7 @@ class LLMClient:
                             yield delta.content
                         if delta and delta.tool_calls:
                             self._accumulate_streaming_tool_calls(tool_calls_acc, delta.tool_calls)
-                
+
                 for clean_token in scrubber.scrub_stream(_token_generator()):
                     full_content += clean_token
                     if on_token is not None:
@@ -720,7 +762,7 @@ class LLMClient:
                 return response.content or ""
         return "(reached max rounds without final response)"
 
-    def _get_vision_client(self) -> "LLMClient":
+    def _get_vision_client(self) -> LLMClient:
         """Return the client that serves image-analysis requests.
 
         Resolves the first endpoint in ``vision_priority`` that exposes a
@@ -1198,9 +1240,9 @@ class RaphaelOrchestrator:
         from orchestrator.cache_manager import get_cache_manager
         from orchestrator.prompt_builder import SystemPromptBuilder
         import datetime
-        
+
         cache = get_cache_manager()
-        
+
         # Static prompt (cached, invalidated only on tool registry change or config reload)
         static_prompt = cache.get("system_prompt", "static")
         if static_prompt is None:
@@ -1217,11 +1259,11 @@ class RaphaelOrchestrator:
                 + SystemPromptBuilder._build_delegation_section()
             )
             cache.set("system_prompt", "static", static_prompt)
-        
+
         # Dynamic prompt (computed fresh each request: timestamp, memory, task context)
         # Task 12: Parallelize memory reads using concurrent.futures
         import concurrent.futures
-        
+
         def _fetch_user_memory():
             """Fetch user-relevant memory context."""
             try:
@@ -1230,7 +1272,7 @@ class RaphaelOrchestrator:
             except Exception as e:
                 logger.error("Failed to load memory context: %s", e)
                 return ""
-        
+
         def _fetch_raphael_memory():
             """Fetch Raphael's own evolution memory (learned rules from corrections)."""
             try:
@@ -1239,7 +1281,7 @@ class RaphaelOrchestrator:
             except Exception as e:
                 logger.debug("Failed to load Raphael evolution context: %s", e)
                 return ""
-        
+
         # Fetch both in parallel with bounded thread pool (max 2 workers)
         memory_context = ""
         raphael_context = ""
@@ -1263,23 +1305,33 @@ class RaphaelOrchestrator:
         tts_ok = state.tts_enabled
         mic_ok = state.audio_input_available
 
+        # Inject written-files registry so the LLM knows exact paths of files
+        # it created this session — prevents needless shell searches
+        from orchestrator.tools.native.files import get_written_files_context
+        written_files_ctx = get_written_files_context()
+
         # Build dynamic sections
         dynamic_prompt = (
             SystemPromptBuilder._build_identity_section(date_str, time_str)
             + SystemPromptBuilder._build_context_section(
-                user_query, memory_context, raphael_context,
-                spk_ok, tts_ok, mic_ok
+                spk_ok=spk_ok,
+                tts_ok=tts_ok,
+                mic_ok=mic_ok,
+                memory_context=memory_context,
+                raphael_context=raphael_context,
             )
             + SystemPromptBuilder._build_output_and_knowledge_section(
                 getattr(config, 'SCREENSHOT_DIR', 'outputs')
             )
         )
-        
+
         # Combine static + dynamic
         content = dynamic_prompt + static_prompt
+        if written_files_ctx:
+            content += f"\n\n=== FILES CREATED THIS SESSION ===\n{written_files_ctx}\nWhen the user asks to fix or edit one of these files, use the exact path above — do NOT run shell commands to search for it.\n"
         if task_context:
             content += f"\n=== TASK CONTEXT ===\n{task_context}\n"
-        
+
         return {"role": "system", "content": content}
 
     @property
@@ -2256,7 +2308,7 @@ class RaphaelOrchestrator:
         try:
             history_file = config.ROAMING_DIR / "sessions" / "current_history.json"
             history_file.parent.mkdir(parents=True, exist_ok=True)
-            
+
             import json
             history_file.write_text(
                 json.dumps(self.history, indent=2, ensure_ascii=False),
@@ -2274,7 +2326,7 @@ class RaphaelOrchestrator:
             history_file = config.ROAMING_DIR / "sessions" / "current_history.json"
             if not history_file.exists():
                 return False
-            
+
             import json
             data = json.loads(history_file.read_text(encoding="utf-8"))
             if isinstance(data, list):

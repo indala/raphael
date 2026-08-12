@@ -46,17 +46,16 @@ def _get_routing_cache_key(query: str) -> str:
     
     Key includes query normalization and agent registry version.
     """
-    from orchestrator.cache_manager import get_cache_manager
     from agents import _AGENT_REGISTRY
-    
+
     # Normalize query: strip whitespace, lowercase
     normalized = query.strip().lower()
-    
+
     # Include registry version so cache auto-invalidates on agent reload
     registry_hash = hashlib.sha256(
         str(sorted(_AGENT_REGISTRY.keys())).encode()
     ).hexdigest()[:8]
-    
+
     # SHA-256 of normalized query + registry hash
     cache_input = f"{normalized}|{registry_hash}"
     return hashlib.sha256(cache_input.encode()).hexdigest()
@@ -71,7 +70,7 @@ def select_agent(query: str) -> tuple[str, float] | None:
     ensure_discovered()
     from agents import _AGENT_REGISTRY
     from orchestrator.cache_manager import get_cache_manager
-    
+
     # Task 14: Check routing cache
     if _routing_cache_enabled:
         cache = get_cache_manager()
@@ -131,7 +130,7 @@ def select_agent(query: str) -> tuple[str, float] | None:
         cache = get_cache_manager()
         cache_key = _get_routing_cache_key(query)
         cache.set("routing", cache_key, result, ttl_seconds=3600)  # 1-hour TTL
-    
+
     return result
 
 

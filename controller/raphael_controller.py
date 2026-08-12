@@ -22,10 +22,10 @@ import contextlib
 
 logger = logging.getLogger(__name__)
 
-_controller_instance: "RaphaelController | None" = None
+_controller_instance: RaphaelController | None = None
 
 
-def get_controller_instance() -> "RaphaelController | None":
+def get_controller_instance() -> RaphaelController | None:
     """Return the active RaphaelController singleton instance."""
     return _controller_instance
 
@@ -157,6 +157,10 @@ class RaphaelController(QObject):
         self.signals.task_finished.connect(self._handle_task_finished_gui)
         self.signals.orchestrator_ready.connect(self._on_orchestrator_ready)
         self.signals.confirmation_requested.connect(self._on_confirmation_requested_gui)
+
+        # ── Model State Tracking ──
+        from orchestrator.model_state_manager import get_model_state_manager
+        self._model_state_manager = get_model_state_manager()
 
         # ── Reactive state subscriptions (replaces manual ui.set_* calls) ──
         # on_change callbacks fire on the *setting* thread.  For properties
@@ -384,7 +388,7 @@ class RaphaelController(QObject):
         # Done loading - transition to main window!
         self.ui.update_splash(100, "Done")
         QTimer.singleShot(200, self.ui.close_splash_and_show_main)
-        
+
         # Task 17: Phase 2 of two-phase eager tool loading (background load of remaining tools)
         threading.Thread(target=self._eager_load_tools_phase2, daemon=True).start()
 
@@ -400,23 +404,23 @@ class RaphaelController(QObject):
         try:
             import logging as log_module
             logger_phase2 = log_module.getLogger(__name__)
-            
+
             # Trigger tool registry to ensure all tools are imported and cached
             from orchestrator.tools import get_tool_schemas, get_tool_map
             from orchestrator.log_utils import log_prefixed, LOG_PREFIX_PARALLEL
-            
+
             log_prefixed(LOG_PREFIX_PARALLEL, log_module.DEBUG, "Phase 2: Starting background tool preload")
-            
+
             # Load all tool schemas and the full tool map (this triggers lazy imports)
             schemas = get_tool_schemas()
             tool_map = get_tool_map()
-            
+
             log_prefixed(
                 LOG_PREFIX_PARALLEL, log_module.INFO,
                 "Phase 2: Preloaded %d tool schemas + %d tool implementations",
                 len(schemas), len(tool_map)
             )
-            
+
             # Warm up cached schemas for next query
             from orchestrator.cache_manager import get_cache_manager
             cache = get_cache_manager()
@@ -1033,11 +1037,11 @@ class RaphaelController(QObject):
             if matched_wake_word:
                 import re as re_mod
                 remaining_text = re_mod.sub(re_mod.escape(matched_wake_word), "", transcription, flags=re_mod.IGNORECASE).strip()
-            
+
             # Clean up punctuation/spaces from remaining text
             import re as re_mod
             remaining_clean = re_mod.sub(r'[^\w\s]', '', remaining_text).strip()
-            
+
             if remaining_clean:
                 logger.info("Wake word + command detected. Processing: '%s'", remaining_text)
                 self._submit_message(remaining_text)

@@ -7,7 +7,7 @@ from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QCompleter, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLayout, QLayoutItem, QLineEdit, QListWidget,
-    QListWidgetItem, QPushButton, QSizePolicy, QSpinBox, QTabWidget,
+    QListWidgetItem, QPushButton, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
     QDoubleSpinBox, QMessageBox, QDialogButtonBox, QScrollArea, QFrame,
     QAbstractItemView,
@@ -358,40 +358,40 @@ class AddFallbackModelDialog(QDialog):
         self.setWindowTitle("Add Fallback Model")
         self.setStyleSheet(_DARK_STYLE)
         self.resize(400, 150)
-        
+
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
-        
+
         lbl = QLabel("Select or type a fallback model name:")
         lbl.setStyleSheet("font-weight: 500; color: #f1f5f9;")
         layout.addWidget(lbl)
-        
+
         self.combo = QComboBox(self)
         self.combo.setEditable(True)
         self.combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.combo.setPlaceholderText("Select or enter model name…")
-        
+
         # Filter empty items and dynamic info placeholders from the source list
         clean_models = [m for m in available_models if m and not m.startswith("dynamic")]
         self.combo.addItems(["", *clean_models])
-        
+
         # Setup fuzzy completer
         completer = QCompleter(self)
         completer.setModel(self.combo.model())
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.combo.setCompleter(completer)
-        
+
         layout.addWidget(self.combo)
-        
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-        
+
     def get_selected(self) -> str:
         return self.combo.currentText().strip()
 
@@ -575,14 +575,14 @@ class AddEndpointDialog(QDialog):
         c.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         c.setPlaceholderText(placeholder)
         c.setMinimumWidth(220)
-        
+
         # Setup fuzzy completer to give search suggestion list as user types
         completer = QCompleter(c)
         completer.setModel(c.model())
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         c.setCompleter(completer)
-        
+
         return c
 
     # ── Source autocomplete ──────────────────────────────────────

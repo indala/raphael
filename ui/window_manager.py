@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QCursor, QGuiApplication, QKeySequence, QShortcut, QTextCursor, QTextDocument
+from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut, QTextCursor, QTextDocument
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,

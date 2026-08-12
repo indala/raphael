@@ -116,6 +116,7 @@ disallow_untyped_defs = false
 check_untyped_defs = false
 warn_no_return = true
 warn_unreachable = true
+exclude = ["dist/", "build/", ".*/dist/.*", ".*/build/.*"]
 
 # Start strict on core modules, relax for the rest
 [[tool.mypy.overrides]]

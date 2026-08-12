@@ -1,4 +1,3 @@
-# ruff: noqa: E402
 """
 Tool registry — collects schemas + functions from native and generated tool modules.
 
@@ -124,46 +123,46 @@ PARALLEL_SAFE_TOOLS: set[str] = {
     # Search & Web
     "web_search", "web_fetch", "web_fetch_multi",
     "get_weather",
-    
+
     # File I/O (read-only operations)
     "process_file", "analyze_image", "read_file",
     "save_output",
-    
+
     # Memory & Knowledge
     "recall_memory", "list_memories",
     "search_knowledge", "query_knowledge",
-    
+
     # Screen & UI (read-only)
     "capture_screen", "desktop_snapshot_v2", "desktop_taskbar",
     "read_clipboard",
     "list_agents", "list_workflows",
-    
+
     # Stock/Finance (read-only)
     "list_stocks", "get_stock_data",
     "get_current_song",
-    
+
     # Goals & Tasks (read-only)
     "list_goals", "list_tasks",
     "check_task",
-    
+
     # System Info (read-only)
     "desktop_processes", "desktop_system_info", "desktop_network",
     "desktop_environment",
     "service_list", "env_get",
-    
+
     # Keyboard State (read-only)
     "key_is_pressed", "caps_lock_state", "num_lock_state",
-    
+
     # Monitor Info (read-only)
     "monitor_get_dpi", "get_brightness",
     "recycle_bin_get",
-    
+
     # Audio (read-only)
     "get_system_volume",
-    
+
     # Music (read-only playlist/song data, not playback control)
     "list_local_songs",
-    
+
     # Email (read-only)
     "read_inbox", "search_emails",
 }

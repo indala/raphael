@@ -8,10 +8,34 @@ from modules import shortcuts as _shortcuts
 # ── Read-before-edit tracking ───────────────────────────────────────
 _read_file_registry: set[str] = set()
 
+# ── Written-file registry — tracks files created this session ───────
+# Maps resolved absolute path → original path string as passed by the LLM.
+# Surfaced back to the LLM via get_written_files_context() so it can find
+# previously created files without shell searches.
+_written_files_registry: dict[str, str] = {}
+
 
 def clear_read_file_registry() -> None:
     """Clear the read-file registry (called at start of each user request)."""
     _read_file_registry.clear()
+
+
+def get_written_files_context() -> str:
+    """Return a summary of files written this session for injection into the system prompt.
+
+    Returns an empty string when nothing has been written yet.
+    """
+    if not _written_files_registry:
+        return ""
+    lines = ["Files created/written this session (use these exact paths — do NOT search):"]
+    for resolved, original in _written_files_registry.items():
+        lines.append(f"  • {resolved}")
+    return "\n".join(lines)
+
+
+def clear_written_files_registry() -> None:
+    """Clear the written-files registry (e.g. on full session reset)."""
+    _written_files_registry.clear()
 
 
 def get_schemas() -> list[dict]:
@@ -312,6 +336,8 @@ def write_file(file_path: str, content: str, append: bool = False) -> str:
         with open(path, mode, encoding="utf-8") as f:
             f.write(content)
         size = os.path.getsize(path)
+        # Track this file so Raphael can find it later without shell searches
+        _written_files_registry[str(path)] = file_path
         action = "Appended to" if append else "Written"
         return f"{action} {path} ({size} bytes)"
     except Exception as e:

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from controller.state import state
-from memory.memory_manager import format_memory_for_prompt, load_memory
+from memory.memory_manager import load_memory
 from orchestrator.core import LLMClient
 
 logger = logging.getLogger(__name__)

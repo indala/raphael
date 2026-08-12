@@ -16,14 +16,13 @@ import logging
 import os
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen, QPixmap, QAction
+from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QMenu,
 )
 
 logger = logging.getLogger(__name__)

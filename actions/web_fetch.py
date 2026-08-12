@@ -108,7 +108,7 @@ def _extract_text_plain(html: str) -> str:
             self._skip = False
             self._skip_tags = {"script", "style", "noscript", "svg", "iframe"}
 
-        def handle_starttag(self, tag, attrs):
+        def handle_starttag(self, tag, _attrs):
             if tag in self._skip_tags:
                 self._skip = True
 

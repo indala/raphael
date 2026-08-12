@@ -39,10 +39,9 @@ import logging
 import re
 import sqlite3
 import threading
-import time as _time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import config
 

@@ -178,7 +178,6 @@ def _check_single_instance():
 
 def _signal_show_window():
     """Post a custom event to the main window to bring it to front."""
-    from PyQt6.QtCore import QCoreApplication, QEvent
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance()
@@ -222,7 +221,7 @@ def main():
     from _user_settings.settings_manager import settings_path
     from orchestrator.endpoint_registry import all as _all_eps
     from orchestrator.endpoint_registry import load as _load_eps
-    
+
     path = settings_path()
     has_endpoints = False
     if path.exists():
@@ -245,25 +244,25 @@ def main():
             try:
                 from PyQt6.QtWidgets import QApplication, QMessageBox
                 from ui.settings_dialog import SettingsDialog
-                
+
                 # Start temporary QApplication to show dialogs
                 app = QApplication.instance() or QApplication(sys.argv)
                 if hasattr(app, "setStyle"):
                     app.setStyle("Fusion")
-                
+
                 QMessageBox.information(
                     None,
                     "Raphael — Configuration Required",
                     "No LLM endpoints are configured in your settings.\n\n"
                     "The Settings panel will now open so you can add and configure your LLM backends."
                 )
-                
+
                 dlg = SettingsDialog(None)
                 res = dlg.exec()
                 if res != 1:  # Not saved (Cancelled/Closed)
                     logger.info("Configuration cancelled by user. Exiting.")
                     sys.exit(0)
-                
+
                 # Verify that they actually saved at least one endpoint
                 _load_eps()
                 if not _all_eps():
@@ -273,7 +272,7 @@ def main():
                         "You must configure at least one LLM endpoint to use Raphael. Exiting."
                     )
                     sys.exit(0)
-                
+
                 # Apply newly saved settings to config module
                 from _user_settings.settings_manager import apply_to_config as _apply_settings
                 _apply_settings(config)
@@ -336,7 +335,7 @@ def main():
             def _cleanup():
                 if controller and controller.vad_detector:
                     controller.vad_detector.stop()
-                
+
                 # ── Stop Cron Scheduler ──
                 if config.CRON_ENABLED:
                     try:
@@ -358,7 +357,7 @@ def main():
         # Check for updates in background (only in GUI mode)
         def _on_update_found(release):
             try:
-                from PyQt6.QtWidgets import QMessageBox  # noqa: F811
+                from PyQt6.QtWidgets import QMessageBox
                 msg = QMessageBox(ui)
                 msg.setWindowTitle("Update Available")
                 msg.setText(

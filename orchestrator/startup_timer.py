@@ -3,7 +3,7 @@ Startup Timer — measures initialization phase durations for startup profiling.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

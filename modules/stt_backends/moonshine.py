@@ -5,10 +5,8 @@ Provides ultra-fast, low-latency ASR using Useful Sensors Moonshine models (moon
 Designed for real-time edge/CPU speech recognition with zero Admin elevation crashes and minimal memory usage.
 """
 
-import io
 import logging
 import threading
-import wave
 import contextlib
 
 from .base import STTBackend, STTResult, StreamHandle, SetupError, STTError
@@ -101,7 +99,7 @@ class MoonshineBackend(STTBackend):
                     import moonshine_onnx
                     self._model = moonshine_onnx
                     logger.info("Local Moonshine (ONNX) model '%s' ready", self._model_name)
-                except Exception as e2:
+                except Exception:
                     logger.error("Failed to load local Moonshine model '%s': %s", self._model_name, e)
                     raise STTError(f"Model load failed: {e}", backend=self.name)
 

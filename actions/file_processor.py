@@ -282,7 +282,7 @@ def _process_pdf(path: Path, action: str, params: dict) -> str:
 
 # ── DOCX operations ─────────────────────────────────────────────────
 
-def _process_docx(path: Path, action: str, params: dict) -> str:
+def _process_docx(path: Path, action: str, _params: dict) -> str:
     action = action or "info"
     try:
         from docx import Document
@@ -317,7 +317,7 @@ def _process_docx(path: Path, action: str, params: dict) -> str:
 
 # ── Text operations ─────────────────────────────────────────────────
 
-def _process_text(path: Path, action: str, params: dict) -> str:
+def _process_text(path: Path, action: str, _params: dict) -> str:
     action = action or "info"
     try:
         text = path.read_text(encoding="utf-8")
@@ -489,7 +489,7 @@ def _process_json(path: Path, action: str, params: dict) -> str:
 
 # ── Code operations ─────────────────────────────────────────────────
 
-def _process_code(path: Path, action: str, params: dict) -> str:
+def _process_code(path: Path, action: str, _params: dict) -> str:
     action = action or "info"
     try:
         text = path.read_text(encoding="utf-8")
@@ -534,7 +534,7 @@ def _process_code(path: Path, action: str, params: dict) -> str:
 
 # ── Audio operations ────────────────────────────────────────────────
 
-def _process_audio(path: Path, action: str, params: dict) -> str:
+def _process_audio(path: Path, action: str, _params: dict) -> str:
     action = action or "info"
 
     if action == "info":
@@ -557,7 +557,7 @@ def _process_audio(path: Path, action: str, params: dict) -> str:
 
 # ── Video operations ────────────────────────────────────────────────
 
-def _process_video(path: Path, action: str, params: dict) -> str:
+def _process_video(path: Path, action: str, _params: dict) -> str:
     action = action or "info"
 
     if action == "info":
@@ -622,7 +622,7 @@ def _process_archive(path: Path, action: str, params: dict) -> str:
 
 # ── PPTX operations ─────────────────────────────────────────────────
 
-def _process_pptx(path: Path, action: str, params: dict) -> str:
+def _process_pptx(path: Path, action: str, _params: dict) -> str:
     action = action or "info"
     try:
         from pptx import Presentation

@@ -190,7 +190,11 @@ class SystemPromptBuilder:
             + SystemPromptBuilder._build_tool_guide()
             + "\n"
             "CODE: Use edit_file with old→new replacement for targeted edits. Use write_file for new files. "
-            "Always read_file before editing.\n\n"
+            "Always read_file before editing. "
+            "IMPORTANT — when fixing a file you previously created: check the '=== FILES CREATED THIS SESSION ===' "
+            "section in this prompt for the exact path. Do NOT use run_system_command or list_directory to "
+            "search for it — that wastes time. The path is already known. Correct flow: "
+            "(1) read_file(known_path) → (2) edit_file(known_path, old, new) → done.\n\n"
             "WINDOWS: Always desktop_snapshot_v2 or ui_enum_windows before acting on windows. "
             "Never close PROTECTED windows (Raphael's own process). "
             "Use ui_close_window (WM_CLOSE), not Alt+F4/kill.\n\n"
@@ -220,10 +224,10 @@ class SystemPromptBuilder:
 
         cache = get_cache_manager()
         registry_version = get_tool_registry_version()
-        
+
         # Set version for the tool_guide namespace
         cache.set_version("tool_guide", registry_version)
-        
+
         # Try to get from cache
         cached = cache.get("tool_guide", "guide_text")
         if cached is not None:
@@ -239,7 +243,7 @@ class SystemPromptBuilder:
                 )
             if existing:
                 lines.append(f"• {label} → {', '.join(existing)}")
-        
+
         result = "\n".join(lines) + "\n"
         # Cache with no TTL (expires only on version change)
         cache.set("tool_guide", "guide_text", result)

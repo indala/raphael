@@ -11,12 +11,10 @@ Coverage:
 """
 
 import json
-import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
 import pytest
 
@@ -180,7 +178,7 @@ class TestJobCRUD:
         """Jobs persist across instances."""
         job1 = add_job(prompt="Task 1", schedule="30m")
         job_id = job1["id"]
-        
+
         job2 = get_job(job_id)
         assert job2 is not None
         assert job2["prompt"] == "Task 1"
@@ -194,7 +192,7 @@ class TestJobCRUD:
         """Remove a job."""
         job = add_job(prompt="Task", schedule="30m")
         job_id = job["id"]
-        
+
         removed = remove_job(job_id)
         assert removed is True
         assert get_job(job_id) is None
@@ -214,7 +212,7 @@ class TestJobCRUD:
         add_job(prompt="Task 1", schedule="30m")
         add_job(prompt="Task 2", schedule="1h")
         add_job(prompt="Task 3", schedule="1d")
-        
+
         jobs = list_jobs()
         assert len(jobs) == 3
 
@@ -223,7 +221,7 @@ class TestJobCRUD:
         add_job(prompt="Enabled 1", schedule="30m", enabled=True)
         add_job(prompt="Disabled", schedule="30m", enabled=False)
         add_job(prompt="Enabled 2", schedule="30m", enabled=True)
-        
+
         enabled = list_jobs(enabled_only=True)
         assert len(enabled) == 2
         assert all(j["enabled"] for j in enabled)
@@ -252,10 +250,10 @@ class TestJobCRUD:
         """Disable and re-enable a job."""
         job = add_job(prompt="Task", schedule="30m", enabled=True)
         job_id = job["id"]
-        
+
         assert disable_job(job_id) is True
         assert get_job(job_id)["enabled"] is False
-        
+
         assert enable_job(job_id) is True
         assert get_job(job_id)["enabled"] is True
 
@@ -274,7 +272,7 @@ class TestDueJobDetection:
         """Future jobs are not due."""
         future = (datetime.now() + timedelta(hours=1)).isoformat()
         add_job(prompt="Future task", schedule=future)
-        
+
         due = get_due_jobs()
         assert len(due) == 0
 
@@ -282,7 +280,7 @@ class TestDueJobDetection:
         """Jobs with past timestamps are due."""
         past = (datetime.now() - timedelta(minutes=5)).isoformat()
         job = add_job(prompt="Past task", schedule=past)
-        
+
         due = get_due_jobs()
         assert len(due) >= 1
         # Find our job in the due list
@@ -294,7 +292,7 @@ class TestDueJobDetection:
         # 2 seconds ago
         past = (datetime.now() - timedelta(seconds=2)).isoformat()
         job = add_job(prompt="Grace window task", schedule=past)
-        
+
         # Grace window is 5 seconds by default
         due = get_due_jobs(grace_window_seconds=5.0)
         found = any(j["id"] == job["id"] for j in due)
@@ -304,7 +302,7 @@ class TestDueJobDetection:
         """Disabled jobs are not returned as due."""
         past = (datetime.now() - timedelta(minutes=1)).isoformat()
         job = add_job(prompt="Disabled task", schedule=past, enabled=False)
-        
+
         due = get_due_jobs()
         found = any(j["id"] == job["id"] for j in due)
         assert not found
@@ -313,9 +311,9 @@ class TestDueJobDetection:
         """Mark one-time job as run (no next_run)."""
         job = add_job(prompt="One-time", schedule="30m")
         job_id = job["id"]
-        
+
         mark_job_run(job_id, success=True)
-        
+
         updated = get_job(job_id)
         assert updated["run_count"] == 1
         assert updated["last_run"] is not None
@@ -325,9 +323,9 @@ class TestDueJobDetection:
         """Mark recurring job as run (calculates next_run)."""
         job = add_job(prompt="Recurring", schedule="every 30m")
         job_id = job["id"]
-        
+
         mark_job_run(job_id, success=True)
-        
+
         updated = get_job(job_id)
         assert updated["run_count"] == 1
         assert updated["next_run"] is not None
@@ -341,9 +339,9 @@ class TestDueJobDetection:
         """Mark failed job run."""
         job = add_job(prompt="Task", schedule="30m")
         job_id = job["id"]
-        
+
         mark_job_run(job_id, success=False, error="Database connection failed")
-        
+
         updated = get_job(job_id)
         assert updated["last_error"] == "Database connection failed"
 
@@ -351,7 +349,7 @@ class TestDueJobDetection:
         """Get job status snapshot."""
         job = add_job(prompt="Task", schedule="30m", name="Status Check")
         job_id = job["id"]
-        
+
         status = get_job_status(job_id)
         assert status["id"] == job_id
         assert status["name"] == "Status Check"
@@ -375,24 +373,24 @@ class TestSchedulerExecution:
         for i in range(3):
             past = (datetime.now() - timedelta(minutes=1)).isoformat()
             add_job(prompt=f"Task {i}", schedule=past)
-        
+
         # Mock run_job to avoid actual LLM calls
         with patch("cron.scheduler.run_job_background") as mock_run:
             mock_run.return_value = None
             executed = cron_scheduler.tick(verbose=False, sync=True)
-        
+
         assert executed == 3
 
     def test_ticker_thread_lifecycle(self):
         """Start and stop ticker thread."""
         assert not cron_scheduler.is_ticker_running()
-        
+
         # Start ticker
         result = cron_scheduler.start_ticker_thread(interval=2, verbose=False)
         assert result is True
         time.sleep(0.1)
         assert cron_scheduler.is_ticker_running()
-        
+
         # Stop ticker
         result = cron_scheduler.stop_ticker_thread(timeout=5.0)
         assert result is True
@@ -403,10 +401,10 @@ class TestSchedulerExecution:
         """Starting ticker when already running returns False."""
         cron_scheduler.start_ticker_thread(interval=2)
         time.sleep(0.1)
-        
+
         result = cron_scheduler.start_ticker_thread(interval=2)
         assert result is False
-        
+
         # Cleanup
         cron_scheduler.stop_ticker_thread()
 
@@ -414,11 +412,11 @@ class TestSchedulerExecution:
         """Ticker stops within timeout."""
         cron_scheduler.start_ticker_thread(interval=60)  # Long interval
         time.sleep(0.1)
-        
+
         start = time.time()
         result = cron_scheduler.stop_ticker_thread(timeout=2.0)
         elapsed = time.time() - start
-        
+
         assert result is True
         assert elapsed < 2.5  # Should stop quickly
 
@@ -439,7 +437,7 @@ class TestSchedulerExecution:
         """Record and retrieve heartbeat."""
         cron_scheduler._record_ticker_heartbeat()
         heartbeat = cron_scheduler.get_ticker_heartbeat()
-        
+
         assert heartbeat is not None
         assert "timestamp" in heartbeat
         assert "running_jobs" in heartbeat
@@ -447,7 +445,7 @@ class TestSchedulerExecution:
     def test_ticker_health_check(self):
         """Check if ticker is healthy (recent heartbeat)."""
         cron_scheduler._record_ticker_heartbeat()
-        
+
         assert cron_scheduler.is_ticker_healthy(max_age_seconds=10.0) is True
         assert cron_scheduler.is_ticker_healthy(max_age_seconds=0.0) is False
 
@@ -467,20 +465,20 @@ class TestFileLocking:
     def test_concurrent_job_writes(self):
         """Multiple threads writing jobs concurrently."""
         results = []
-        
+
         def add_job_thread(i):
             try:
                 job = add_job(prompt=f"Task {i}", schedule="30m")
                 results.append(job["id"])
             except Exception as e:
                 results.append(f"error:{e}")
-        
+
         threads = [threading.Thread(target=add_job_thread, args=(i,)) for i in range(5)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        
+
         # All jobs should be added successfully (no corrupt state)
         assert len(results) == 5
         all_jobs = list_jobs()
@@ -490,12 +488,12 @@ class TestFileLocking:
         """Job file writes are atomic (no partial writes)."""
         # Add a job
         job1 = add_job(prompt="Task 1", schedule="30m")
-        
+
         # Load jobs file directly
         jobs_path = cron_jobs._get_jobs_path()
         content = jobs_path.read_text(encoding="utf-8")
         data = json.loads(content)
-        
+
         # File should be valid JSON (not truncated)
         assert isinstance(data, dict)
         assert len(data) >= 1
@@ -510,7 +508,7 @@ class TestEdgeCases:
         """Handle corrupted jobs.json gracefully."""
         jobs_path = cron_jobs._get_jobs_path()
         jobs_path.write_text("{ invalid json }", encoding="utf-8")
-        
+
         # Should load as empty, not crash
         jobs = cron_jobs._load_jobs()
         assert jobs == {}
@@ -524,7 +522,7 @@ class TestEdgeCases:
         """Clear all jobs."""
         add_job(prompt="Task 1", schedule="30m")
         add_job(prompt="Task 2", schedule="30m")
-        
+
         count = clear_all_jobs()
         assert count == 2
         assert list_jobs() == []
@@ -533,7 +531,7 @@ class TestEdgeCases:
         """Handle very long job prompts."""
         long_prompt = "Task description " * 100
         job = add_job(prompt=long_prompt, schedule="30m")
-        
+
         retrieved = get_job(job["id"])
         assert retrieved["prompt"] == long_prompt
 
@@ -544,7 +542,7 @@ class TestEdgeCases:
             schedule="30m",
             name="日本語テスト"
         )
-        
+
         retrieved = get_job(job["id"])
         assert "天気" in retrieved["prompt"]
         assert "テスト" in retrieved["name"]
@@ -556,7 +554,7 @@ class TestEdgeCases:
             schedule="30m",
             name="Job & Task (Special) [1/2]"
         )
-        
+
         retrieved = get_job(job["id"])
         assert retrieved["name"] == "Job & Task (Special) [1/2]"
 
@@ -564,12 +562,12 @@ class TestEdgeCases:
         """Run count increments correctly."""
         job = add_job(prompt="Task", schedule="every 1h")
         job_id = job["id"]
-        
+
         assert get_job(job_id)["run_count"] == 0
-        
+
         mark_job_run(job_id, success=True)
         assert get_job(job_id)["run_count"] == 1
-        
+
         mark_job_run(job_id, success=True)
         assert get_job(job_id)["run_count"] == 2
 
@@ -588,23 +586,23 @@ class TestIntegration:
             name="Test Job"
         )
         job_id = job["id"]
-        
+
         # Verify job is scheduled
         assert get_job(job_id) is not None
         assert get_job(job_id)["enabled"] is True
-        
+
         # Mark as run
         mark_job_run(job_id, success=True)
-        
+
         # Verify run count incremented
         updated = get_job(job_id)
         assert updated["run_count"] == 1
         assert updated["next_run"] is not None
-        
+
         # Disable and verify
         disable_job(job_id)
         assert get_job(job_id)["enabled"] is False
-        
+
         # Re-enable and remove
         enable_job(job_id)
         assert remove_job(job_id) is True
@@ -615,14 +613,14 @@ class TestIntegration:
         job1 = add_job(prompt="Every 30 minutes", schedule="every 30m")
         job2 = add_job(prompt="Every 2 hours", schedule="every 2h")
         job3 = add_job(prompt="Once in 1 day", schedule="1d")
-        
+
         future = (datetime.now() + timedelta(days=7)).isoformat()
         job4 = add_job(prompt="Weekly report", schedule=future)
-        
+
         # Verify all jobs exist
         all_jobs = list_jobs()
         assert len(all_jobs) >= 4
-        
+
         # Verify schedule types are preserved
         assert get_job(job1["id"])["schedule"]["kind"] == "interval"
         assert get_job(job3["id"])["schedule"]["kind"] == "once"

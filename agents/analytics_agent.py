@@ -7,6 +7,7 @@ Learns from corrections over time via agent evolution memory.
 """
 
 import logging
+from typing import ClassVar
 from agents import register
 from agents.base_agent import BaseAgent
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class AnalyticsAgent(BaseAgent):
     name = "analytics"
     description = "Stock portfolio analytics — P&L analysis, market quotes, buy/sell suggestions, risk warnings"
-    available_tools = [
+    available_tools: ClassVar[list[str]] = [
         "get_portfolio_holdings", "get_positions", "get_market_quote",
         "get_historical_data", "get_portfolio_summary",
     ]

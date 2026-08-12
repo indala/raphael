@@ -33,7 +33,7 @@ import json
 import logging
 import re
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

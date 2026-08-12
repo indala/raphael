@@ -10,12 +10,11 @@ import enum
 import logging
 import re
 import time
-from typing import Any, Callable, Dict, List, Set, Tuple
+from typing import Any
 
 from orchestrator.tools import (
     PARALLEL_SAFE_TOOLS,
     get_filtered_schemas,
-    get_tool_map,
     get_tool_schemas,
 )
 
@@ -39,7 +38,7 @@ class ToolDomain(str, enum.Enum):
 
 
 # Tool mapping per domain
-DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
+DOMAIN_TOOL_MAP: dict[ToolDomain, tuple[str, ...]] = {
     ToolDomain.AUDIO: (
         "set_system_volume",
         "get_system_volume",
@@ -235,7 +234,7 @@ DOMAIN_TOOL_MAP: Dict[ToolDomain, Tuple[str, ...]] = {
 }
 
 # Domain keyword patterns for fast intent matching
-DOMAIN_PATTERNS: Dict[ToolDomain, re.Pattern] = {
+DOMAIN_PATTERNS: dict[ToolDomain, re.Pattern] = {
     ToolDomain.AUDIO: re.compile(
         r"\b(volume|sound|speaker|audio|mute|unmute|louder|quieter|db)\b", re.IGNORECASE
     ),
@@ -282,7 +281,7 @@ DOMAIN_PATTERNS: Dict[ToolDomain, re.Pattern] = {
 }
 
 # Curated core tools for general queries when domain is broad/ambiguous
-CORE_FALLBACK_TOOLS: Tuple[str, ...] = (
+CORE_FALLBACK_TOOLS: tuple[str, ...] = (
     "web_search",
     "web_fetch",
     "read_file",
@@ -317,14 +316,14 @@ class ToolOrchestrator:
     """Manages tool routing, intent classification, schema filtering, and execution health."""
 
     def __init__(self):
-        self._metrics: Dict[str, Dict[str, Any]] = {}
+        self._metrics: dict[str, dict[str, Any]] = {}
 
-    def classify_query(self, query: str) -> Set[ToolDomain]:
+    def classify_query(self, query: str) -> set[ToolDomain]:
         """Classify user query into matching tool domains using keyword patterns."""
         if not query or not query.strip():
             return {ToolDomain.GENERAL}
 
-        matched: Set[ToolDomain] = set()
+        matched: set[ToolDomain] = set()
         for domain, pattern in DOMAIN_PATTERNS.items():
             if pattern.search(query):
                 matched.add(domain)
@@ -332,14 +331,14 @@ class ToolOrchestrator:
         return matched if matched else {ToolDomain.GENERAL}
 
     def get_filtered_schemas(
-        self, query: str, extra_schemas: List[Dict[str, Any]] | None = None
-    ) -> List[Dict[str, Any]]:
+        self, query: str, extra_schemas: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
         """Return tool schemas filtered to matching query domains.
 
         Reduces prompt size from 60+ schemas to ~5-15 relevant schemas.
         """
         domains = self.classify_query(query)
-        tool_names: Set[str] = set()
+        tool_names: set[str] = set()
 
         if ToolDomain.GENERAL in domains or len(domains) > 4:
             # Broad query — use curated core fallback tools
@@ -405,7 +404,7 @@ class ToolOrchestrator:
         m["total_duration_ms"] += duration_ms
         m["last_called_at"] = time.time()
 
-    def get_tool_health_report(self) -> Dict[str, Dict[str, Any]]:
+    def get_tool_health_report(self) -> dict[str, dict[str, Any]]:
         """Return snapshot of tool execution metrics."""
         report = {}
         for name, m in self._metrics.items():

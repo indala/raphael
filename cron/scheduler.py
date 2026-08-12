@@ -20,21 +20,21 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ── Global State ───────────────────────────────────────────────────────────
 
-_ticker_thread: Optional[threading.Thread] = None
+_ticker_thread: threading.Thread | None = None
 _ticker_stop_event = threading.Event()
-_running_jobs: Dict[str, Dict[str, Any]] = {}
+_running_jobs: dict[str, dict[str, Any]] = {}
 _running_jobs_lock = threading.Lock()
 
 
 # ── Job Execution ──────────────────────────────────────────────────────────
 
-def run_job(job: Dict[str, Any], orchestrator: Optional[Any] = None) -> Tuple[bool, str, Optional[str]]:
+def run_job(job: dict[str, Any], orchestrator: Any | None = None) -> tuple[bool, str, str | None]:
     """
     Execute a single cron job.
     
@@ -47,10 +47,10 @@ def run_job(job: Dict[str, Any], orchestrator: Optional[Any] = None) -> Tuple[bo
     """
     job_id = job.get("id", "unknown")
     prompt = job.get("prompt", "")
-    
+
     if not prompt:
         return False, "", "Job prompt is empty"
-    
+
     # Get orchestrator if not provided
     if orchestrator is None:
         try:
@@ -59,14 +59,14 @@ def run_job(job: Dict[str, Any], orchestrator: Optional[Any] = None) -> Tuple[bo
         except Exception as e:
             logger.error("Failed to initialize orchestrator for job %s: %s", job_id, e)
             return False, "", f"Orchestrator init failed: {e}"
-    
+
     logger.info("Running cron job %s: %s", job_id, prompt[:50])
-    
+
     try:
         # Submit the job prompt as a read-only interaction
         # Similar to proactive checks but labeled as CRON_JOB
         full_prompt = f"[CRON_JOB:{job_id}] {prompt}"
-        
+
         # Call orchestrator to process the interaction
         # This returns the assistant's response
         response = orchestrator.process_interaction(
@@ -74,17 +74,17 @@ def run_job(job: Dict[str, Any], orchestrator: Optional[Any] = None) -> Tuple[bo
             interaction_type="cron",
             read_only=True,
         )
-        
+
         # Return success
         return True, response, None
-    
+
     except Exception as e:
-        error_msg = f"{type(e).__name__}: {str(e)}"
+        error_msg = f"{type(e).__name__}: {e!s}"
         logger.error("Job %s failed: %s\n%s", job_id, error_msg, traceback.format_exc())
         return False, "", error_msg
 
 
-def run_job_background(job: Dict[str, Any], orchestrator: Optional[Any] = None) -> None:
+def run_job_background(job: dict[str, Any], orchestrator: Any | None = None) -> None:
     """
     Execute a job in the background with state tracking.
     
@@ -93,7 +93,7 @@ def run_job_background(job: Dict[str, Any], orchestrator: Optional[Any] = None) 
     - Job's last_run and run_count via cron.jobs.mark_job_run()
     """
     job_id = job.get("id", "unknown")
-    
+
     try:
         # Track as running
         with _running_jobs_lock:
@@ -101,14 +101,14 @@ def run_job_background(job: Dict[str, Any], orchestrator: Optional[Any] = None) 
                 "started_at": datetime.now().isoformat(),
                 "status": "running",
             }
-        
+
         # Execute job
         success, output, error = run_job(job, orchestrator)
-        
+
         # Update job record
         from cron.jobs import mark_job_run
         mark_job_run(job_id, success=success, error=error)
-        
+
         # Log result
         if success:
             logger.info("Job %s completed successfully", job_id)
@@ -116,21 +116,21 @@ def run_job_background(job: Dict[str, Any], orchestrator: Optional[Any] = None) 
                 logger.debug("Job %s output: %s", job_id, output[:200])
         else:
             logger.error("Job %s failed: %s", job_id, error)
-        
+
         # Update tracking
         with _running_jobs_lock:
             if job_id in _running_jobs:
                 _running_jobs[job_id]["status"] = "completed" if success else "failed"
                 _running_jobs[job_id]["finished_at"] = datetime.now().isoformat()
                 _running_jobs[job_id]["error"] = error
-    
+
     except Exception as e:
         logger.error("Unexpected error in job background execution: %s", e)
         with _running_jobs_lock:
             if job_id in _running_jobs:
                 _running_jobs[job_id]["status"] = "error"
                 _running_jobs[job_id]["error"] = str(e)
-    
+
     finally:
         # Remove from running after a delay (keep for logs)
         time.sleep(2)
@@ -154,24 +154,24 @@ def tick(verbose: bool = True, sync: bool = True) -> int:
     """
     from cron.jobs import get_due_jobs
     import config
-    
+
     due_jobs = get_due_jobs(grace_window_seconds=5.0)
-    
+
     if verbose and due_jobs:
         logger.debug("Cron tick: %d due job(s) found", len(due_jobs))
-    
+
     executed = 0
     max_parallel = config.CRON_MAX_PARALLEL_JOBS
-    
+
     with _running_jobs_lock:
         running_count = len(_running_jobs)
-    
+
     for job in due_jobs:
         # Limit parallel execution
         if running_count >= max_parallel:
             logger.debug("Reached max parallel jobs (%d); deferring %s", max_parallel, job.get("id"))
             break
-        
+
         if sync:
             # Background thread execution (non-blocking)
             thread = threading.Thread(
@@ -184,10 +184,10 @@ def tick(verbose: bool = True, sync: bool = True) -> int:
         else:
             # Synchronous execution (blocking)
             run_job_background(job)
-        
+
         executed += 1
         running_count += 1
-    
+
     return executed
 
 
@@ -200,27 +200,27 @@ def _ticker_loop(interval: int = 60, verbose: bool = False) -> None:
         verbose: Enable debug logging
     """
     logger.info("Cron ticker started (interval: %ds)", interval)
-    
+
     while not _ticker_stop_event.is_set():
         try:
             # Perform one tick
             count = tick(verbose=verbose, sync=True)
-            
+
             if count > 0 and verbose:
                 logger.debug("Executed %d cron job(s) in this tick", count)
-            
+
             # Record heartbeat
             _record_ticker_heartbeat()
-        
+
         except Exception as e:
             logger.error("Error in cron ticker: %s\n%s", e, traceback.format_exc())
-        
+
         # Sleep until next tick (check stop event frequently)
         for _ in range(interval):
             if _ticker_stop_event.is_set():
                 break
             time.sleep(1)
-    
+
     logger.info("Cron ticker stopped")
 
 
@@ -236,11 +236,11 @@ def start_ticker_thread(interval: int = 60, verbose: bool = False) -> bool:
         True if started, False if already running
     """
     global _ticker_thread
-    
+
     if _ticker_thread is not None and _ticker_thread.is_alive():
         logger.warning("Cron ticker already running")
         return False
-    
+
     _ticker_stop_event.clear()
     _ticker_thread = threading.Thread(
         target=_ticker_loop,
@@ -264,14 +264,14 @@ def stop_ticker_thread(timeout: float = 5.0) -> bool:
         True if stopped, False if timeout or not running
     """
     global _ticker_thread
-    
+
     if _ticker_thread is None or not _ticker_thread.is_alive():
         logger.debug("Cron ticker not running")
         return True
-    
+
     logger.info("Stopping cron ticker...")
     _ticker_stop_event.set()
-    
+
     try:
         _ticker_thread.join(timeout=timeout)
         if _ticker_thread.is_alive():
@@ -291,7 +291,7 @@ def is_ticker_running() -> bool:
 
 # ── Job State Tracking ─────────────────────────────────────────────────────
 
-def get_running_jobs() -> List[Dict[str, Any]]:
+def get_running_jobs() -> list[dict[str, Any]]:
     """Get list of currently running jobs."""
     with _running_jobs_lock:
         return [
@@ -304,7 +304,7 @@ def get_running_jobs() -> List[Dict[str, Any]]:
         ]
 
 
-def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
+def get_job_status(job_id: str) -> dict[str, Any] | None:
     """Get status of a specific job (if running)."""
     with _running_jobs_lock:
         return _running_jobs.get(job_id)
@@ -315,12 +315,12 @@ def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
 def _get_heartbeat_file() -> Path:
     """Get path to ticker heartbeat file."""
     from _user_settings.paths import get_data_dir
-    
+
     try:
         data_dir = get_data_dir()
     except Exception:
         data_dir = Path(".").resolve()
-    
+
     cron_dir = data_dir / "cron"
     cron_dir.mkdir(parents=True, exist_ok=True)
     return cron_dir / ".ticker_heartbeat"
@@ -343,7 +343,7 @@ def _record_ticker_heartbeat() -> None:
         logger.debug("Failed to record heartbeat: %s", e)
 
 
-def get_ticker_heartbeat() -> Optional[Dict[str, Any]]:
+def get_ticker_heartbeat() -> dict[str, Any] | None:
     """Get last recorded heartbeat (for health checks)."""
     try:
         heartbeat_file = _get_heartbeat_file()
@@ -352,7 +352,7 @@ def get_ticker_heartbeat() -> Optional[Dict[str, Any]]:
             return data
     except Exception as e:
         logger.debug("Failed to read heartbeat: %s", e)
-    
+
     return None
 
 
@@ -361,7 +361,7 @@ def is_ticker_healthy(max_age_seconds: float = 120.0) -> bool:
     heartbeat = get_ticker_heartbeat()
     if not heartbeat:
         return False
-    
+
     try:
         last_beat = datetime.fromisoformat(heartbeat.get("timestamp", ""))
         age = (datetime.now() - last_beat).total_seconds()
@@ -372,7 +372,7 @@ def is_ticker_healthy(max_age_seconds: float = 120.0) -> bool:
 
 # ── Convenience Functions ─────────────────────────────────────────────────
 
-def get_scheduler_status() -> Dict[str, Any]:
+def get_scheduler_status() -> dict[str, Any]:
     """Get overall scheduler status."""
     return {
         "ticker_running": is_ticker_running(),

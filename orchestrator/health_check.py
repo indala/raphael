@@ -80,11 +80,11 @@ def ping_endpoint(
             msg_obj = ((data.get("choices") or [{}])[0].get("message") or {})
             reply = msg_obj.get("content") or ""
             reasoning = msg_obj.get("reasoning_content") or ""
-            
+
             # Any valid textual or reasoning response indicates the endpoint is active and working
             if reply.strip() or reasoning.strip():
                 return PingResult(True, model, elapsed)
-                
+
             logger.debug("Ping reply unexpected: %r", reply)
             return PingResult(False, model, error="Empty response content")
     except urllib.error.HTTPError as exc:

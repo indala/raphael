@@ -26,7 +26,6 @@ import re
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ _TESTS_DIR = _PROJECT_DIR / "tests" / "generated"
 
 # ── Dependency Auto-Detection ──────────────────────────────────────────────
 
-def _extract_dependencies(code: str) -> List[str]:
+def _extract_dependencies(code: str) -> list[str]:
     """
     Parse imports from tool code to auto-detect tool dependencies.
     
@@ -58,25 +57,25 @@ def _extract_dependencies(code: str) -> List[str]:
         List of tool names referenced
     """
     dependencies = []
-    
+
     # Pattern 1: from tools.tool_name import ...
     pattern1 = r'from\s+tools\.(\w+)\s+import'
     for match in re.finditer(pattern1, code):
         tool_name = match.group(1)
         if tool_name not in dependencies:
             dependencies.append(tool_name)
-    
+
     # Pattern 2: import tools.tool_name
     pattern2 = r'import\s+tools\.(\w+)'
     for match in re.finditer(pattern2, code):
         tool_name = match.group(1)
         if tool_name not in dependencies:
             dependencies.append(tool_name)
-    
+
     return dependencies
 
 
-def _load_reviews() -> Dict[str, Dict[str, any]]:
+def _load_reviews() -> dict[str, dict[str, any]]:
     """Load reviews data (skill ratings)."""
     if not _REVIEWS_FILE.exists():
         return {}
@@ -87,7 +86,7 @@ def _load_reviews() -> Dict[str, Dict[str, any]]:
         return {}
 
 
-def _save_reviews(reviews: Dict[str, Dict[str, any]]) -> None:
+def _save_reviews(reviews: dict[str, dict[str, any]]) -> None:
     """Save reviews data atomically."""
     try:
         _REVIEWS_FILE.write_text(
@@ -274,7 +273,7 @@ def import_tool(cap_path: str, force: bool = False) -> str:
 
 # ── Ratings & Reviews ──────────────────────────────────────────────────────
 
-def rate_skill(name: str, rating: int, review: Optional[str] = None) -> str:
+def rate_skill(name: str, rating: int, review: str | None = None) -> str:
     """
     Rate a skill (1-5 stars) with optional text review.
     
@@ -288,34 +287,34 @@ def rate_skill(name: str, rating: int, review: Optional[str] = None) -> str:
     """
     if not 1 <= rating <= 5:
         return "Rating must be between 1 and 5 stars."
-    
+
     reviews = _load_reviews()
-    
+
     if name not in reviews:
         reviews[name] = {
             "rating": 0,
             "review_count": 0,
             "reviews": []
         }
-    
+
     # Add user rating
     reviews[name]["reviews"].append({
         "rating": rating,
         "review": review,
         "rated_at": datetime.now().isoformat()
     })
-    
+
     # Recalculate average
     ratings = [r["rating"] for r in reviews[name]["reviews"]]
     reviews[name]["rating"] = sum(ratings) / len(ratings)
     reviews[name]["review_count"] = len(ratings)
-    
+
     _save_reviews(reviews)
     logger.info("Rated skill '%s': %d/5 stars", name, rating)
     return f"Rated '{name}': {rating}/5 ⭐"
 
 
-def get_skill_ratings(name: str) -> Optional[Dict[str, any]]:
+def get_skill_ratings(name: str) -> dict[str, any] | None:
     """Get aggregated ratings for a skill."""
     reviews = _load_reviews()
     return reviews.get(name)
@@ -330,7 +329,7 @@ def list_marketplace(with_ratings: bool = True) -> str:
 
     lines = ["**Available Marketplace Packages:**\n"]
     reviews = _load_reviews() if with_ratings else {}
-    
+
     for c in caps:
         try:
             with zipfile.ZipFile(c, "r") as zf:
@@ -341,12 +340,12 @@ def list_marketplace(with_ratings: bool = True) -> str:
                 deps = meta.get("dependencies", [])
                 tags = meta.get("tags", [])
                 has_test = "test.py" in zf.namelist()
-                
+
                 # Get rating if available
                 rating_info = reviews.get(name, {})
                 avg_rating = rating_info.get("rating", 0)
                 review_count = rating_info.get("review_count", 0)
-                
+
                 lines.append(f"**{name}** v{version}")
                 if desc:
                     lines.append(f"  {desc}")

@@ -14,7 +14,7 @@ removes them from the token stream during streaming responses.
 """
 
 import re
-from typing import Generator
+from collections.abc import Generator
 
 
 class StreamingContextScrubber:
@@ -44,38 +44,38 @@ class StreamingContextScrubber:
     def __init__(self):
         self._buffer = ""
 
-    def scrub_stream(self, tokens: Generator[str, None, None]) -> Generator[str, None, None]:
+    def scrub_stream(self, tokens: Generator[str]) -> Generator[str]:
         """Scrub memory context tags from a token stream.
         
         Yields clean tokens with memory context markers removed.
         Handles split-chunk detection by buffering partial matches.
         """
         self._buffer = ""
-        
+
         for token in tokens:
             self._buffer += token
-            
+
             # Check if buffer contains a complete tag to remove
             cleaned = self._buffer
             for pattern in self._PATTERNS:
                 cleaned = pattern.sub("", cleaned)
-            
+
             # Check if buffer might be an incomplete tag prefix
             could_be_prefix = any(
                 cleaned.endswith(prefix[:i])
                 for prefix in self._PREFIX_PATTERNS
                 for i in range(1, len(prefix) + 1)
             )
-            
+
             if could_be_prefix:
                 # Hold in buffer — might be incomplete tag
                 continue
-            
+
             # Buffer doesn't match any tag pattern — yield it
             if cleaned:
                 yield cleaned
                 self._buffer = ""
-        
+
         # End of stream — yield any remaining buffer
         if self._buffer:
             # Do a final scrub pass
@@ -101,7 +101,7 @@ class StreamingContextScrubber:
 _scrubber = StreamingContextScrubber()
 
 
-def scrub_stream(tokens: Generator[str, None, None]) -> Generator[str, None, None]:
+def scrub_stream(tokens: Generator[str]) -> Generator[str]:
     """Scrub a token stream using the global scrubber instance."""
     return _scrubber.scrub_stream(tokens)
 

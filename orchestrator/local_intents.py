@@ -4,7 +4,6 @@ Local Intent Fast Path — classifies and handles common deterministic intents w
 
 import datetime
 import logging
-import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -178,6 +177,33 @@ def _handle_memory(text: str, controller: Any = None) -> str:
         return f"Memory usage: {percent_used}% full ({available_gb:.1f} GB available)."
     except Exception as e:
         return f"Memory check unavailable: {e}"
+
+
+def _handle_wifi(text: str, controller: Any = None) -> str:
+    try:
+        import psutil
+        net = psutil.net_if_stats()
+        if not net:
+            return "No network interfaces found."
+        wifi_stats = {}
+        for iface, stats in net.items():
+            if iface.startswith("eth") or iface.startswith("wlan") or iface.startswith("wifi"):
+                wifi_stats[iface] = {
+                    "isup": stats.isup,
+                    "speed": stats.speed,
+                }
+        if not wifi_stats:
+            return "No Wi-Fi interface found (this is typically a desktop environment)."
+        result = "Wi-Fi interfaces:\n"
+        for iface, stats in wifi_stats.items():
+            status = "up" if stats.isup else "down"
+            result += f"  {iface}: {status}"
+            if stats.speed:
+                result += f" ({stats.speed} Mbps)"
+            result += "\n"
+        return result
+    except Exception as e:
+        return f"Wi-Fi check unavailable: {e}"
 
 
 # Structured matcher table: list of (regex_pattern, intent_name, handler_fn)

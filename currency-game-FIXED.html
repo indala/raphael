@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Currency by Country Quiz</title>
+<style>
+   *{ margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  h1 {
+    font-size: 2.5em;
+    margin: 10px 0;
+    text-shadow: 0 0 20px rgba(255,255,255,0.3);
+    animation: glow 2s infinite alternate;
+  }
+  @keyframes glow {
+    from { text-shadow: 0 0 10px rgba(255,255,255,0.2); }
+    to { text-shadow: 0 0 30px rgba(255,255,255,0.5); }
+  }
+  .score-bar {
+    background: rgba(0,0,0,0.4);
+    border-radius: 10px;
+    padding: 10px 30px;
+    margin: 10px 0;
+    font-size: 1.2em;
+    display: flex;
+    gap: 30px;
+  }
+  .score-bar span { background: #0f3460; padding: 5px 15px; border-radius: 5px; }
+  .score-bar .gold { color: #ffd700; }
+  .score-bar .green { color: #00ff88; }
+  .score-bar .red { color: #ff4444; }
+  .quiz-container {
+    background: rgba(0,0,0,0.6);
+    border-radius: 20px;
+    padding: 30px;
+    max-width: 600px;
+    width: 100%;
+    box-shadow: 0 0 40px rgba(0,0,0,0.5);
+  }
+  .question { font-size: 1.4em; margin: 15px 0; text-align: center; font-weight: bold; }
+  .currency-image {
+    width: 200px;
+    height: 200px;
+    margin: 20px auto;
+    background: rgba(255,255,255,0.05);
+    border-radius: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 5em;
+  }
+  .options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 15px;
+  }
+  .option-btn {
+    padding: 15px 20px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+    font-size: 1.1em;
+    cursor: pointer;
+    transition: all 0.3s;
+    text-align: left;
+  }
+  .option-btn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.1);
+    border-color: #00ff88;
+    transform: scale(1.02);
+  }
+  .option-btn:disabled {
+    cursor: not-allowed;
+  }
+  .option-btn.correct {
+    background: rgba(0,255,136,0.3) !important;
+    border-color: #00ff88 !important;
+  }
+  .option-btn.wrong {
+    background: rgba(255,68,68,0.3) !important;
+    border-color: #ff4444 !important;
+  }
+  .feedback {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 1.2em;
+    display: none;
+  }
+  .feedback.correct { display: block; background: rgba(0,255,136,0.2); color: #00ff88; }
+  .feedback.wrong { display: block; background: rgba(255,68,68,0.2); color: #ff4444; }
+  .progress {
+    background: rgba(255,255,255,0.1);
+    border-radius: 10px;
+    margin: 10px 0;
+    height: 20px;
+    display: flex;
+    overflow: hidden;
+  }
+  .progress-fill {
+    background: linear-gradient(90deg, #00ff88, #00ccff);
+    height: 100%;
+    transition: width 0.5s ease;
+  }
+  .controls {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+  }
+  button {
+    padding: 12px 30px;
+    border: none;
+    border-radius: 10px;
+    font-size: 1.1em;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .btn-primary { background: linear-gradient(135deg, #00ff88, #00ccff); color: #1a1a2e; font-weight: bold; }
+  .btn-primary:hover { transform: scale(1.05); }
+  .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+  .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+  .timer-bar {
+    height: 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    margin: 10px 0;
+    overflow: hidden;
+  }
+  .timer-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #ff4444, #ff8800);
+    border-radius: 4px;
+    transition: width 1s linear;
+  }
+  .timer-fill.warning { background: linear-gradient(90deg, #ff8800, #ffcc00); }
+  .timer-fill.danger { background: linear-gradient(90deg, #ff0000, #ff4444); animation: blink 0.5s infinite; }
+  @keyframes blink { 50% { opacity: 0.5; } }
+  .final-screen { text-align: center; }
+  .final-screen h2 { font-size: 2em; margin: 20px 0; }
+  .stats { display: flex; gap: 30px; justify-content: center; margin: 20px 0; }
+  .stats div { text-align: center; }
+  .stats .big { font-size: 2em; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>💰 Currency by Country Quiz 💰</h1>
+
+<div class="score-bar">
+  <span>⭐ Score: <span id="score">0</span></span>
+  <span>🏆 Streak: <span id="streak">0</span></span>
+  <span>👥 Played: <span id="games">0</span></span>
+</div>
+
+<div class="timer-bar"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
+
+<div class="quiz-container" id="quiz-container">
+  <div class="question" id="question">Loading...</div>
+  <div class="currency-image" id="currency-icon">?</div>
+  <div class="options" id="options"></div>
+  <div class="feedback" id="feedback"></div>
+  <div class="progress"><div class="progress-fill" id="progress" style="width:0%"></div></div>
+</div>
+
+<div class="controls">
+  <button class="btn-primary" id="next-btn">Next Question ➡️</button>
+</div>
+
+<div class="final-screen" id="final-screen" style="display:none;">
+  <h2 id="final-title">Game Over!</h2>
+  <p id="final-msg"></p>
+  <div class="stats">
+    <div><div class="big" id="final-score">0</div>Score</div>
+    <div><div class="big" id="final-streak">0</div>Streak</div>
+    <div><div class="big" id="final-correct">0</div>Correct</div>
+  </div>
+  <button class="btn-primary" id="restart-btn" style="margin-top:20px;">Play Again 🔄</button>
+</div>
+
+<script>
+const questions = [
+  { q: "Which currency is used in India?", currency: "₹", options: ["US Dollar", "Euro", "Rupee", "Pound"], correct: 2, country: "India" },
+  { q: "Which currency is used in Japan?", currency: "¥", options: ["Yen", "Won", "Yuan", "Euro"], correct: 0, country: "Japan" },
+  { q: "Which currency is used in Brazil?", currency: "R$", options: ["Real", "Dollar", "Peso", "Pound"], correct: 0, country: "Brazil" },
+  { q: "Which currency is used in Germany?", currency: "€", options: ["Euro", "Mark", "Pound", "Franc"], correct: 0, country: "Germany" },
+  { q: "Which currency is used in the UK?", currency: "£", options: ["Pound Sterling", "Euro", "Dollar", "Yen"], correct: 0, country: "UK" },
+  { q: "Which currency is used in South Africa?", currency: "R", options: ["Rand", "Rupee", "Mark", "Franc"], correct: 0, country: "South Africa" },
+  { q: "Which currency is used in China?", currency: "¥", options: ["Yuan", "Rupee", "Won", "Yen"], correct: 0, country: "China" },
+  { q: "Which currency is used in Thailand?", currency: "฿", options: ["Baht", "Rupee", "Dollar", "Euro"], correct: 0, country: "Thailand" },
+  { q: "Which currency is used in France?", currency: "€", options: ["Euro", "Franc", "Peso", "Mark"], correct: 0, country: "France" },
+  { q: "Which currency is used in Canada?", currency: "C$", options: ["Dollar", "Yen", "Euro", "Rupee"], correct: 0, country: "Canada" },
+];
+
+let score = 0;
+let streak = 0;
+let gamesPlayed = 0;
+let currentQ = 0;
+let timeLeft = 15;
+let timerInterval = null;
+let selectedOpt = -1;
+let isAnswered = false;  // FIX: Track if answer already selected
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function initGame() {
+  score = 0;
+  streak = 0;
+  gamesPlayed = 0;
+  currentQ = 0;
+  if (timerInterval) clearInterval(timerInterval);
+  updateDisplay();
+  nextQuestion();
+}
+
+function nextQuestion() {
+  if (currentQ >= questions.length) {
+    endGame();
+    return;
+  }
+  
+  gamesPlayed++;
+  const q = questions[currentQ];
+  selectedOpt = -1;
+  isAnswered = false;  // FIX: Reset answer flag
+  updateDisplay();
+  
+  document.getElementById('question').textContent = `Q${currentQ+1}/${questions.length}: ${q.q}`;
+  document.getElementById('currency-icon').textContent = q.currency;
+  document.getElementById('currency-icon').style.fontSize = '5em';
+  
+  const optionsDiv = document.getElementById('options');
+  optionsDiv.innerHTML = '';
+  q.options.forEach((opt, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.textContent = opt;
+    btn.addEventListener('click', () => selectAnswer(i, btn));
+    optionsDiv.appendChild(btn);
+  });
+  
+  document.getElementById('feedback').style.display = 'none';
+  document.getElementById('next-btn').style.display = 'none';  // FIX: Hide next button initially
+  
+  // Timer
+  timeLeft = 15;
+  updateTimerBar();
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    updateTimerBar();
+    if (timeLeft <= 0) {
+      clearInterval(timerInterval);
+      if (!isAnswered) {  // FIX: Only auto-advance if no answer was selected
+        isAnswered = true;
+        streak = 0;
+        showNextButton();
+      }
+    }
+  }, 1000);
+}
+
+function updateTimerBar() {
+  const pct = (timeLeft / 15) * 100;
+  const timerFill = document.getElementById('timer-fill');
+  timerFill.style.width = pct + '%';
+  timerFill.className = 'timer-fill';
+  if (timeLeft <= 5) timerFill.classList.add('danger');
+  else if (timeLeft <= 10) timerFill.classList.add('warning');
+}
+
+function selectAnswer(idx, btn) {
+  // FIX: Prevent selecting answer twice
+  if (isAnswered) return;
+  isAnswered = true;
+  
+  const q = questions[currentQ];
+  const btns = document.querySelectorAll('.option-btn');
+  btns.forEach(b => b.disabled = true);  // FIX: Disable all buttons after selection
+  
+  if (idx === q.correct) {
+    btn.classList.add('correct');
+    streak++;
+    score += 10 + (streak - 1) * 2;
+    document.getElementById('feedback').textContent = '✅ Correct! +10 pts';
+    document.getElementById('feedback').className = 'feedback correct';
+    document.getElementById('feedback').style.display = 'block';
+  } else {
+    btn.classList.add('wrong');
+    btns[q.correct].classList.add('correct');
+    streak = 0;
+    document.getElementById('feedback').textContent = `❌ Wrong! The answer is ${q.country}.`;
+    document.getElementById('feedback').className = 'feedback wrong';
+    document.getElementById('feedback').style.display = 'block';
+  }
+  
+  updateDisplay();
+  clearInterval(timerInterval);
+  
+  // FIX: Show next button instead of auto-advancing
+  showNextButton();
+}
+
+function showNextButton() {
+  document.getElementById('next-btn').style.display = 'block';
+  document.getElementById('next-btn').textContent = 'Next Question ➡️';
+}
+
+function updateDisplay() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('streak').textContent = streak;
+  document.getElementById('games').textContent = gamesPlayed;
+}
+
+function endGame() {
+  clearInterval(timerInterval);
+  document.getElementById('quiz-container').style.display = 'none';
+  document.getElementById('next-btn').style.display = 'none';
+  document.getElementById('final-screen').style.display = 'block';
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('final-streak').textContent = streak;
+  document.getElementById('final-correct').textContent = Math.round(score / 10);
+  
+  const title = score >= 100 ? "🏆 Incredible!" : score >= 60 ? "👍 Well Done!" : score >= 30 ? "🔥 Keep Going!" : "💪 Keep Trying!";
+  document.getElementById('final-title').textContent = title;
+  document.getElementById('final-msg').textContent = `You completed ${gamesPlayed} quiz(s) and scored ${score} points!`;
+}
+
+document.getElementById('next-btn').addEventListener('click', () => {
+  if (currentQ < questions.length - 1) {
+    currentQ++;
+    nextQuestion();
+  } else {
+    endGame();
+  }
+});
+
+document.getElementById('restart-btn').addEventListener('click', () => {
+  document.getElementById('quiz-container').style.display = 'block';
+  document.getElementById('final-screen').style.display = 'none';
+  document.getElementById('next-btn').style.display = 'none';
+  initGame();
+});
+
+// Start the game
+initGame();
+</script>
+
+</body>
+</html>

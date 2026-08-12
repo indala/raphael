@@ -31,16 +31,16 @@ from cron.scheduler import (
 
 __all__ = [
     "add_job",
-    "remove_job",
-    "get_job",
-    "list_jobs",
-    "update_job",
     "get_due_jobs",
+    "get_job",
+    "get_running_jobs",
+    "is_ticker_running",
+    "list_jobs",
     "parse_schedule",
-    "tick",
+    "remove_job",
     "run_job",
     "start_ticker_thread",
     "stop_ticker_thread",
-    "get_running_jobs",
-    "is_ticker_running",
+    "tick",
+    "update_job",
 ]

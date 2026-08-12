@@ -12,10 +12,9 @@ Coverage:
 
 import json
 import tempfile
-import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -155,7 +154,7 @@ class TestRatingsSystem:
         marketplace.rate_skill("test_tool", rating=5)
         marketplace.rate_skill("test_tool", rating=4)
         marketplace.rate_skill("test_tool", rating=5)
-        
+
         ratings = marketplace.get_skill_ratings("test_tool")
         assert ratings is not None
         assert ratings["review_count"] == 3
@@ -165,7 +164,7 @@ class TestRatingsSystem:
         """Verify rating average is calculated correctly."""
         for rating in [1, 2, 3, 4, 5]:
             marketplace.rate_skill("avg_test", rating=rating)
-        
+
         ratings = marketplace.get_skill_ratings("avg_test")
         assert ratings["rating"] == 3.0  # (1+2+3+4+5)/5
         assert ratings["review_count"] == 5
@@ -173,7 +172,7 @@ class TestRatingsSystem:
     def test_rating_persistence(self):
         """Ratings persist across calls."""
         marketplace.rate_skill("persist_test", rating=5)
-        
+
         # Load reviews fresh
         reviews = marketplace._load_reviews()
         assert "persist_test" in reviews
@@ -193,7 +192,7 @@ class TestExportImport:
         nonexistent = MagicMock()
         nonexistent.exists.return_value = False
         mock_prod.__truediv__.return_value = nonexistent
-        
+
         result = marketplace.export_tool("nonexistent")
         assert "not found" in result.lower()
 
@@ -206,15 +205,15 @@ class TestExportImport:
     ):
         """Auto-detect dependencies during export."""
         mock_extract.return_value = ["dep1", "dep2"]
-        
+
         # Mock tool file
         tool_file = MagicMock()
         tool_file.exists.return_value = True
         tool_file.read_text.return_value = "import tools.dep1"
-        
+
         mock_prod.__truediv__.return_value = tool_file
         mock_tests.__truediv__.return_value = MagicMock(exists=lambda: False)
-        
+
         mock_registry.return_value = {
             "test_tool": {
                 "name": "test_tool",
@@ -224,10 +223,10 @@ class TestExportImport:
                 "dependencies": [],
             }
         }
-        
+
         with patch("zipfile.ZipFile"):
             result = marketplace.export_tool("test_tool", auto_deps=True)
-        
+
         # Should have detected dependencies
         mock_extract.assert_called()
 
@@ -248,7 +247,7 @@ class TestExportImport:
         mock_zip = MagicMock()
         mock_zip.namelist.return_value = ["code.py"]  # Missing metadata
         mock_zip_class.return_value.__enter__.return_value = mock_zip
-        
+
         with tempfile.NamedTemporaryFile(suffix=".cap") as f:
             result = marketplace.import_tool(f.name)
             assert "missing metadata.json" in result.lower()
@@ -266,7 +265,7 @@ class TestListMarketplace:
         mock_dir.glob.return_value = []
         mock_dir.mkdir.return_value = None
         mock_reviews.return_value = {}
-        
+
         result = marketplace.list_marketplace()
         assert "No .cap files" in result
 
@@ -280,7 +279,7 @@ class TestListMarketplace:
         mock_cap.stem = "test_skill"
         mock_dir.glob.return_value = [mock_cap]
         mock_dir.mkdir.return_value = None
-        
+
         # Mock zip contents
         meta = {
             "name": "test_skill",
@@ -293,7 +292,7 @@ class TestListMarketplace:
         mock_zip.read.return_value = json.dumps(meta).encode("utf-8")
         mock_zip.namelist.return_value = ["code.py", "metadata.json"]
         mock_zip_class.return_value.__enter__.return_value = mock_zip
-        
+
         # Mock ratings
         mock_reviews.return_value = {
             "test_skill": {
@@ -301,9 +300,9 @@ class TestListMarketplace:
                 "review_count": 10,
             }
         }
-        
+
         result = marketplace.list_marketplace(with_ratings=True)
-        
+
         assert "test_skill" in result
         assert "1.0.0" in result
         assert "4.5/5" in result
@@ -324,16 +323,16 @@ class TestRemoteMarketplace:
                 {"name": "skill2", "version": "2.0", "description": "Skill 2"},
             ]
         }
-        
+
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(skills_data).encode("utf-8")
         mock_response.__enter__.return_value = mock_response
         mock_response.__exit__.return_value = False
         mock_urlopen.return_value = mock_response
-        
+
         with patch.dict("os.environ", {"MARKETPLACE_INDEX_URL": "http://localhost"}):
             result = remote_marketplace.discover_remote()
-        
+
         assert len(result) == 2
         assert result[0]["name"] == "skill1"
 
@@ -344,11 +343,11 @@ class TestRemoteMarketplace:
             "skills": [{"name": "cached_skill"}],
             "cached_at": datetime.now().isoformat(),
         }
-        
+
         with patch("tools_meta.remote_marketplace._load_index_cache") as mock_cache:
             mock_cache.return_value = cache_data
             result = remote_marketplace.discover_remote(use_cache=True)
-        
+
         assert len(result) == 1
         assert result[0]["name"] == "cached_skill"
         # Should NOT call urlopen when using cache
@@ -359,11 +358,11 @@ class TestRemoteMarketplace:
         """Handle offline marketplace gracefully."""
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
-        
+
         with patch("tools_meta.remote_marketplace._load_index_cache") as mock_cache:
             mock_cache.return_value = None
             result = remote_marketplace.discover_remote(use_cache=True)
-        
+
         assert result == []
 
     def test_search_remote_by_name(self):
@@ -373,11 +372,11 @@ class TestRemoteMarketplace:
             {"name": "time_tool", "description": "Time utilities", "tags": []},
             {"name": "clock_widget", "description": "Display clock", "tags": ["weather"]},
         ]
-        
+
         with patch("tools_meta.remote_marketplace.discover_remote") as mock_discover:
             mock_discover.return_value = skills
             result = remote_marketplace.search_remote("weather")
-        
+
         assert len(result) == 2
         assert result[0]["name"] == "weather_tool"
         assert result[1]["name"] == "clock_widget"
@@ -389,11 +388,11 @@ class TestRemoteMarketplace:
             {"name": "tool2", "description": "Desc", "tags": ["file", "io"]},
             {"name": "tool3", "description": "Desc", "tags": ["api", "rest"]},
         ]
-        
+
         with patch("tools_meta.remote_marketplace.discover_remote") as mock_discover:
             mock_discover.return_value = skills
             result = remote_marketplace.search_remote("api")
-        
+
         assert len(result) == 2
         assert result[0]["name"] == "tool1"
         assert result[1]["name"] == "tool3"
@@ -402,17 +401,17 @@ class TestRemoteMarketplace:
     def test_download_skill_success(self, mock_urlopen):
         """Successfully download a skill."""
         cap_data = b"fake zip file contents"
-        
+
         mock_response = MagicMock()
         mock_response.read.return_value = cap_data
         mock_response.__enter__.return_value = mock_response
         mock_response.__exit__.return_value = False
         mock_urlopen.return_value = mock_response
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("tools_meta.remote_marketplace._CACHE_DIR", Path(tmpdir)):
                 result = remote_marketplace.download_skill("test_skill")
-        
+
         assert result is not None
         assert result.suffix == ".cap"
 
@@ -421,7 +420,7 @@ class TestRemoteMarketplace:
         """Handle download failure gracefully."""
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("Not found")
-        
+
         result = remote_marketplace.download_skill("nonexistent")
         assert result is None
 
@@ -432,9 +431,9 @@ class TestRemoteMarketplace:
         mock_cap_path = Path("/tmp/test.cap")
         mock_download.return_value = mock_cap_path
         mock_import.return_value = "Imported 'test_skill' v1.0.0"
-        
+
         result = remote_marketplace.install_skill("test_skill")
-        
+
         assert "Imported" in result
         mock_download.assert_called()
         mock_import.assert_called()
@@ -443,9 +442,9 @@ class TestRemoteMarketplace:
     def test_install_skill_download_failure(self, mock_download):
         """Handle install failure when download fails."""
         mock_download.return_value = None
-        
+
         result = remote_marketplace.install_skill("test_skill")
-        
+
         assert "Failed" in result or "Download" in result
 
     def test_cache_management(self):
@@ -454,14 +453,14 @@ class TestRemoteMarketplace:
             "skills": [{"name": "skill1"}],
             "cached_at": datetime.now().isoformat(),
         }
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "index.json"
-            
+
             with patch("tools_meta.remote_marketplace._INDEX_CACHE_FILE", cache_file):
                 remote_marketplace._save_index_cache(cache_data)
                 loaded = remote_marketplace._load_index_cache()
-        
+
         assert loaded is not None
         assert loaded["skills"][0]["name"] == "skill1"
 
@@ -472,14 +471,14 @@ class TestRemoteMarketplace:
             "skills": [{"name": "skill1"}],
             "cached_at": old_time,
         }
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "index.json"
             cache_file.write_text(json.dumps(cache_data), encoding="utf-8")
-            
+
             with patch("tools_meta.remote_marketplace._INDEX_CACHE_FILE", cache_file):
                 loaded = remote_marketplace._load_index_cache()
-        
+
         assert loaded is None  # Cache should be considered expired
 
     def test_clear_cache(self):
@@ -490,10 +489,10 @@ class TestRemoteMarketplace:
             (cache_dir / "skill1.cap").write_text("data")
             (cache_dir / "skill2.cap").write_text("data")
             (cache_dir / "index.json").write_text("{}")
-            
+
             with patch("tools_meta.remote_marketplace._CACHE_DIR", cache_dir):
                 count = remote_marketplace.clear_cache()
-        
+
         assert count >= 2
 
 
@@ -508,12 +507,12 @@ class TestMarketplaceIntegration:
         marketplace.rate_skill("skill_a", 5, "Excellent!")
         marketplace.rate_skill("skill_a", 4, "Good")
         marketplace.rate_skill("skill_b", 3, "Average")
-        
+
         # Retrieve ratings
         ratings_a = marketplace.get_skill_ratings("skill_a")
         assert ratings_a["review_count"] == 2
         assert ratings_a["rating"] == 4.5
-        
+
         ratings_b = marketplace.get_skill_ratings("skill_b")
         assert ratings_b["review_count"] == 1
         assert ratings_b["rating"] == 3.0
@@ -528,7 +527,7 @@ def get_weather():
     resp = fetch("https://api.weather.com")
     return loads(resp)
 """
-        
+
         deps = marketplace._extract_dependencies(code_with_deps)
         assert "http_tool" in deps
         assert "json_tool" in deps
@@ -543,13 +542,13 @@ def get_weather():
             {"name": "weather_display", "tags": ["weather", "ui"]},
             {"name": "http_client", "tags": ["http", "api"]},
         ]
-        
+
         mock_discover.return_value = remote_skills
         mock_search.return_value = [remote_skills[0], remote_skills[1]]
-        
+
         # Search for weather-related skills
         result = remote_marketplace.search_remote("weather")
-        
+
         assert len(result) == 2
         assert "weather" in result[0]["tags"] or "weather" in result[1]["tags"]
 
@@ -562,7 +561,7 @@ class TestEdgeCases:
     def test_rate_skill_corrupted_reviews_file(self):
         """Handle corrupted reviews.json gracefully."""
         marketplace._REVIEWS_FILE.write_text("{ invalid json }", encoding="utf-8")
-        
+
         # Should load as empty and continue
         msg = marketplace.rate_skill("test", rating=5)
         assert "Rated" in msg or "5/5" in msg
@@ -576,7 +575,7 @@ class TestEdgeCases:
         """Handle very long review text."""
         long_review = "Great " * 1000
         marketplace.rate_skill("tool", 5, long_review)
-        
+
         ratings = marketplace.get_skill_ratings("tool")
         assert ratings is not None
         assert ratings["review_count"] == 1

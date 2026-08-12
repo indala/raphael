@@ -96,7 +96,7 @@ def run_pyinstaller_build(clean: bool = False):
             exe_path = ROOT_DIR / "dist" / "Raphael" / "Raphael.exe"
             # Apply code signature
             sign_binary(exe_path)
-            
+
             print("\n" + "=" * 60)
             print(" BUILD SUCCESSFUL!")
             print(f" Executable: {exe_path}")

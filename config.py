@@ -242,6 +242,35 @@ DEBUG = False
 HAS_SPEAKER = ""
 
 # ============================================================
+# Task 19: Adaptive Model Fallback & State Management
+# ============================================================
+MODEL_STATE_TRACKING_ENABLED = True
+
+# Exponential backoff for rate limits: base * (2 ^ failures)
+MODEL_BACKOFF_BASE_SECONDS = 2
+MODEL_BACKOFF_MAX_SECONDS = 600  # 10 minutes
+
+# Request deduplication: cache LLM responses for this long
+MODEL_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+# Endpoints to monitor (populated by endpoint_registry)
+MONITORED_ENDPOINTS = {
+    "openrouter": {
+        "fallback_models": [
+            "openrouter/openrouter/free",
+            "openrouter/mistralai/mistral-nemo:free",
+            "openrouter/cohere/north-mini-code:free",
+        ]
+    },
+    "mistral": {
+        "fallback_models": ["mistral-small-latest", "mistral-tiny-latest"]
+    },
+    "opencode": {
+        "fallback_models": ["ling-3.0-flash-free"]
+    },
+}
+
+# ============================================================
 # Background Task Runner
 # ============================================================
 BACKGROUND_MAX_WORKERS = 4

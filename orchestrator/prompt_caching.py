@@ -31,7 +31,6 @@ or as an environment variable.
 
 from __future__ import annotations
 
-import copy
 import logging
 import re
 

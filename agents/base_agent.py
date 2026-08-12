@@ -13,7 +13,7 @@ Agents now have evolution hooks (agent memory):
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from orchestrator.core import LLMClient, ToolExecutor
@@ -24,11 +24,11 @@ class BaseAgent(ABC):
 
     name: str = ""
     description: str = ""
-    available_tools: list[str] = []  # [] means ALL tools are available
+    available_tools: ClassVar[list[str]] = []  # [] means ALL tools are available
     max_rounds: int = 8
 
     # Delegation tools made available to every agent automatically
-    _DELEGATION_TOOLS = ["list_agents", "delegate_to_agent", "delegate_background", "delegate_parallel", "check_task"]
+    _DELEGATION_TOOLS: ClassVar[list[str]] = ["list_agents", "delegate_to_agent", "delegate_background", "delegate_parallel", "check_task"]
 
     def __init_subclass__(cls, **kwargs):
         """Automatically inject delegation tools into every agent's available_tools."""
@@ -54,8 +54,8 @@ class BaseAgent(ABC):
             memory = _load()
             agent_data = memory.get(self.name, {})
             has_memory = bool(
-                agent_data.get("interactions") or 
-                agent_data.get("corrections") or 
+                agent_data.get("interactions") or
+                agent_data.get("corrections") or
                 agent_data.get("rules")
             )
             if has_memory:
@@ -71,7 +71,7 @@ class BaseAgent(ABC):
         try:
             from orchestrator.core import LLMClient
             client = LLMClient()
-            
+
             prompt = (
                 f"You are a routing classifier. Determine if this query matches the agent's capability.\n\n"
                 f"Agent: {self.name}\n"
@@ -83,17 +83,17 @@ class BaseAgent(ABC):
                 "- 0.7-1.0: Strong match\n\n"
                 "Output ONLY the number (e.g. '0.75'), no explanation."
             )
-            
+
             messages = [{"role": "system", "content": prompt}]
             resp = client.chat(messages, tools=None, reason="agent_routing_seed")
-            
+
             if resp and hasattr(resp, "content") and resp.content:
                 score_text = resp.content.strip()
                 score = float(score_text)
                 return max(0.0, min(1.0, score))
         except Exception:
             pass
-        
+
         return 0.0
 
     @abstractmethod

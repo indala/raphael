@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Callable
+from collections.abc import Callable
 
 import config
 
@@ -195,7 +195,6 @@ class RoutineEngine:
                     self._orchestrator_cb(prompt)
                 elif routine.action_type == "workflow":
                     from workflows.executor import execute_workflow
-                    from workflows import load_workflow
                     execute_workflow(routine.action_value)
             except Exception as e:
                 logger.error("Failed to execute routine '%s': %s", routine.name, e)

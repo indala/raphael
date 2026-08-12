@@ -7,13 +7,12 @@ Coverage:
 - ProactiveEngine: idle check timing, monitor integration, callback dispatch
 """
 
-import json
 import time
 import tempfile
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,7 +23,6 @@ from orchestrator.proactive_engine import (
     _is_blocked,
     _slug,
     _title_hash,
-    PROACTIVE_SYSTEM_INSTRUCTION,
 )
 
 
@@ -54,7 +52,7 @@ def proactive_engine(tmp_storage):
     """ProactiveEngine instance with mocked callbacks."""
     submit_cb = MagicMock()
     get_idle_time_cb = MagicMock(return_value=0.0)
-    
+
     engine = ProactiveEngine(
         submit_cb=submit_cb,
         get_idle_time_cb=get_idle_time_cb,
@@ -216,7 +214,7 @@ class TestTopicMonitor:
         monitor1 = TopicMonitor(tmp_storage / "monitors.json")
         monitor1.add_topic("python news")
         monitor1.add_topic("tech news")
-        
+
         # Reload from disk
         monitor2 = TopicMonitor(tmp_storage / "monitors.json")
         topics = monitor2.list_topics()
@@ -233,7 +231,7 @@ class TestTopicMonitor:
         """Check all topics using mocked DDG."""
         # Add a topic
         topic_monitor.add_topic("python news")
-        
+
         # Mock DDG response
         mock_results = [
             {
@@ -244,13 +242,13 @@ class TestTopicMonitor:
             }
         ]
         mock_ddgs.return_value.__enter__.return_value.news.return_value = iter(mock_results)
-        
+
         # First check: should return alert with headline
         alerts = topic_monitor.check_all()
         assert len(alerts) == 1
         assert "[MONITOR_ALERT]" in alerts[0]
         assert "Python 3.12 Released" in alerts[0]
-        
+
         # Second check same day: no new headline
         alerts = topic_monitor.check_all()
         assert len(alerts) == 0
@@ -259,25 +257,25 @@ class TestTopicMonitor:
     def test_check_all_headline_change_detected(self, mock_ddgs, topic_monitor):
         """Detect when headline changes."""
         topic_monitor.add_topic("tech news")
-        
+
         # First headline
         results1 = [{"title": "Headline A", "body": "", "source": "", "date": ""}]
         mock_ddgs.return_value.__enter__.return_value.news.return_value = iter(results1)
-        
+
         # Manually set date to "yesterday" to force re-check
         slug = _slug("tech news")
         topic_monitor._monitors[slug]["last_check"] = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        
+
         alerts = topic_monitor.check_all()
         assert len(alerts) == 1  # First headline generates alert
-        
+
         # Second headline (different)
         results2 = [{"title": "Headline B", "body": "", "source": "", "date": ""}]
         mock_ddgs.return_value.__enter__.return_value.news.return_value = iter(results2)
-        
+
         # Force re-check
         topic_monitor._monitors[slug]["last_check"] = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        
+
         alerts = topic_monitor.check_all()
         assert len(alerts) == 1  # New headline generates alert
 
@@ -325,11 +323,11 @@ class TestEventWatcher:
         """Fire each reminder exactly once."""
         past = (datetime.now() - timedelta(minutes=1)).isoformat()
         event_watcher.add_reminder(past, "One-time event")
-        
+
         # First check: fires
         alerts = event_watcher.check_due()
         assert len(alerts) == 1
-        
+
         # Second check: already fired, no alert
         alerts = event_watcher.check_due()
         assert len(alerts) == 0
@@ -338,10 +336,10 @@ class TestEventWatcher:
         """List upcoming non-fired reminders."""
         t1 = (datetime.now() + timedelta(hours=1)).isoformat()
         t2 = (datetime.now() + timedelta(hours=2)).isoformat()
-        
+
         event_watcher.add_reminder(t1, "First")
         event_watcher.add_reminder(t2, "Second")
-        
+
         upcoming = event_watcher.list_upcoming(limit=10)
         assert len(upcoming) == 2
         assert upcoming[0]["message"] == "First"
@@ -352,7 +350,7 @@ class TestEventWatcher:
         watcher1 = EventWatcher(tmp_storage / "events.json")
         future = (datetime.now() + timedelta(hours=1)).isoformat()
         watcher1.add_reminder(future, "Persisted event")
-        
+
         watcher2 = EventWatcher(tmp_storage / "events.json")
         upcoming = watcher2.list_upcoming()
         assert len(upcoming) == 1
@@ -414,15 +412,15 @@ class TestProactiveEngine:
     def test_check_cooldown_enforced(self, proactive_engine):
         """Enforce min_interval between checks."""
         proactive_engine._get_idle_time = MagicMock(return_value=20.0)
-        
+
         # First check succeeds
         result1 = proactive_engine.check()
         assert result1 is True
-        
+
         # Immediate second check fails (min_interval)
         result2 = proactive_engine.check()
         assert result2 is False
-        
+
         # Only one submit call
         assert proactive_engine._submit_cb.call_count == 1
 
@@ -431,7 +429,7 @@ class TestProactiveEngine:
         proactive_engine._get_idle_time = MagicMock(return_value=20.0)
         proactive_engine.check()
         assert proactive_engine._pending_proactive is True
-        
+
         proactive_engine.reset_timer()
         assert proactive_engine._pending_proactive is False
 
@@ -484,7 +482,7 @@ class TestProactiveEngineIntegration:
         """Complete workflow: add monitors, reminders, trigger checks."""
         submit_cb = MagicMock()
         get_idle_time_cb = MagicMock(return_value=0.0)
-        
+
         engine = ProactiveEngine(
             submit_cb=submit_cb,
             get_idle_time_cb=get_idle_time_cb,
@@ -492,16 +490,16 @@ class TestProactiveEngineIntegration:
             cooldown=5.0,
             min_interval=2.0,
         )
-        
+
         # Add monitors and reminders
         engine.add_monitor("weather")
         future = (datetime.now() + timedelta(minutes=30)).isoformat()
         engine.add_reminder(future, "Upcoming meeting")
-        
+
         # Verify they're saved
         assert len(engine.list_monitors()) == 1
         assert len(engine.list_reminders()) >= 1
-        
+
         # Trigger idle check
         get_idle_time_cb.return_value = 10.0
         result = engine.check()
@@ -513,16 +511,16 @@ class TestProactiveEngineIntegration:
         # Add a past reminder
         past = (datetime.now() - timedelta(minutes=1)).isoformat()
         proactive_engine.add_reminder(past, "Past event")
-        
+
         # First check in monitor loop
         proactive_engine._get_idle_time = MagicMock(return_value=20.0)
         result1 = proactive_engine.check()
         submit_calls_1 = proactive_engine._submit_cb.call_count
-        
+
         # Simulate second check (but below min_interval)
         result2 = proactive_engine.check()
         submit_calls_2 = proactive_engine._submit_cb.call_count
-        
+
         # Submit count should not increase significantly
         # (first check fires idle proactive, not the past reminder yet)
         assert submit_calls_2 <= submit_calls_1 + 2
@@ -537,7 +535,7 @@ class TestEdgeCases:
         """Handle corrupted JSON gracefully."""
         monitor_file = tmp_storage / "monitors.json"
         monitor_file.write_text("{ invalid json }", encoding="utf-8")
-        
+
         # Should load as empty, not crash
         monitor = TopicMonitor(monitor_file)
         assert len(monitor._monitors) == 0
@@ -546,7 +544,7 @@ class TestEdgeCases:
         """Handle corrupted events file gracefully."""
         events_file = tmp_storage / "events.json"
         events_file.write_text("[broken", encoding="utf-8")
-        
+
         # Should load as empty
         watcher = EventWatcher(events_file)
         assert len(watcher._events) == 0
@@ -554,18 +552,18 @@ class TestEdgeCases:
     def test_concurrent_monitor_access(self, tmp_storage):
         """Multiple monitors can write simultaneously (atomic writes)."""
         monitor = TopicMonitor(tmp_storage / "monitors.json")
-        
+
         def add_many():
             for i in range(5):
                 monitor.add_topic(f"topic_{i}")
                 time.sleep(0.01)
-        
+
         threads = [threading.Thread(target=add_many) for _ in range(2)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        
+
         # All topics should be present (atomic writes prevent corruption)
         topics = monitor.list_topics()
         assert len(topics) >= 5
@@ -575,7 +573,7 @@ class TestEdgeCases:
         long_topic = "a" * 500
         msg = topic_monitor.add_topic(long_topic)
         assert "monitoring" in msg.lower()
-        
+
         # Slug should be truncated
         topics = topic_monitor.list_topics()
         assert any(t.startswith("a") for t in topics)
@@ -584,7 +582,7 @@ class TestEdgeCases:
         """Handle unicode topic names."""
         msg = topic_monitor.add_topic("Python 🐍 News 📰")
         assert "monitoring" in msg.lower()
-        
+
         topics = topic_monitor.list_topics()
         assert len(topics) == 1
 

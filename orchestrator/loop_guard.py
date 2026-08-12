@@ -31,6 +31,13 @@ import config
 # while waiting — but should not call unboundedly in one request.
 _POLL_NAME_RE = re.compile(r"poll|wait|status|check|progress|refresh|monitor", re.IGNORECASE)
 
+# Search/filesystem-probe tool names — an agent should resolve a file path in
+# at most a handful of attempts, not run 15+ shell searches across drives.
+_SEARCH_NAME_RE = re.compile(
+    r"run_system_command|run_command|list_directory|list_dir",
+    re.IGNORECASE,
+)
+
 
 def _canonical_args(args: Any | None) -> str:
     """Stable string form of a tool-call's arguments for hashing.
@@ -61,6 +68,7 @@ class LoopGuard:
         identical_threshold: int | None = None,
         pingpong_threshold: int | None = None,
         poll_budget: int | None = None,
+        search_budget: int | None = None,
     ) -> None:
         self.identical_threshold = (
             identical_threshold or int(getattr(config, "LOOP_GUARD_IDENTICAL_THRESHOLD", 3))
@@ -69,6 +77,7 @@ class LoopGuard:
             pingpong_threshold or int(getattr(config, "LOOP_GUARD_PINGPONG_THRESHOLD", 4))
         )
         self.poll_budget = poll_budget or int(getattr(config, "LOOP_GUARD_POLL_BUDGET", 5))
+        self.search_budget = search_budget or int(getattr(config, "LOOP_GUARD_SEARCH_BUDGET", 5))
 
         # Rolling state (all reset naturally per-instance / per-request).
         self._id_hashes: deque[str] = deque(maxlen=self.identical_threshold)
@@ -77,6 +86,8 @@ class LoopGuard:
         self._ping_warned = False
         self._poll_count = 0
         self._poll_warned = False
+        self._search_count = 0
+        self._search_warned = False
 
     def check(self, tool_name: str, tool_args: Any | None = None, result: Any = "") -> str | None:
         """Record one executed tool call; return a warning to inject, else None.
@@ -118,6 +129,21 @@ class LoopGuard:
                     f"LoopGuard: you have called polling/status tools {self._poll_count} times "
                     "this request without moving toward a final answer. Stop polling and either "
                     "act decisively or give your final answer now."
+                )
+
+        # Search/filesystem-probe budget — prevents 15+ shell searches for a file.
+        if _SEARCH_NAME_RE.search(tool_name):
+            self._search_count += 1
+            if not self._search_warned and self._search_count > self.search_budget:
+                self._search_warned = True
+                return (
+                    f"LoopGuard: you have called filesystem search/probe tools "
+                    f"({tool_name}) {self._search_count} times this request. "
+                    "Stop searching. If you created this file earlier in the conversation, "
+                    "its exact path is listed in '=== FILES CREATED THIS SESSION ===' in your "
+                    "system prompt — use that path directly with read_file then edit_file. "
+                    "If the file was not created this session, tell the user you cannot locate it "
+                    "and ask them to provide the exact path."
                 )
 
         return None

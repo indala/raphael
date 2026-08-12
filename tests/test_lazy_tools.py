@@ -5,12 +5,9 @@ import unittest
 from unittest.mock import patch
 
 from orchestrator.tools import (
-    _ensure_tools_loaded,
     get_filtered_schemas,
     get_tool_map,
-    get_tool_schemas,
     invalidate_tool_cache,
-    reload_tools,
 )
 
 
@@ -38,7 +35,7 @@ class TestLazyToolsAndSchemaCache(unittest.TestCase):
     def test_get_filtered_schemas_caching(self):
         """Test cache hits and misses for get_filtered_schemas."""
         tool_names = ["web_search", "read_file"]
-        
+
         # Initial call computes and caches
         schemas1 = get_filtered_schemas(tool_names)
         self.assertIsInstance(schemas1, list)

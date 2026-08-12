@@ -9,7 +9,8 @@ change, enabling decoupled UI updates.  The controller wires these
 callbacks to ``pyqtSignal``\\s for automatic cross-thread delivery.
 """
 import threading
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import config
 

@@ -11,13 +11,11 @@ Provides a rich canvas workspace where Raphael can dynamically render:
 from __future__ import annotations
 
 import html
-import json
 import logging
-import os
 from typing import Any
 
 from PyQt6.QtCore import QPoint, QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QFont, QGuiApplication, QIcon, QKeySequence, QShortcut, QTextCursor
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -25,7 +23,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QTabWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,

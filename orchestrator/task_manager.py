@@ -109,7 +109,7 @@ class Task:
         }
 
     @staticmethod
-    def from_dict(d: dict) -> "Task":
+    def from_dict(d: dict) -> Task:
         """Rehydrate a Task from a serialized dict. A fresh abort_signal is created."""
         return Task(
             id=d["id"],
