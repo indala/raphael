@@ -987,14 +987,20 @@ class RaphaelController(QObject):
         # ── Semantic Echo Filter ──
         # Discard the transcription if it matches or overlaps with recently spoken TTS text
         import re
+        import difflib
         clean_trans = re.sub(r'[^\w\s]', '', transcription.lower()).strip()
         is_echo = False
         if clean_trans:
             for spoken in list(self._recent_spoken_texts):
                 clean_spoken = re.sub(r'[^\w\s]', '', spoken.lower()).strip()
-                if clean_spoken and (clean_trans in clean_spoken or clean_spoken in clean_trans):
-                    is_echo = True
-                    break
+                if clean_spoken:
+                    # Use sequence matching for more accurate echo detection
+                    # Only discard if the similarity is very high (likely an actual echo)
+                    similarity = difflib.SequenceMatcher(None, clean_trans, clean_spoken).ratio()
+                    logger.debug("Echo guard: comparing '%s' vs '%s' -> similarity %.2f", clean_trans, clean_spoken, similarity)
+                    if similarity > 0.8:  # 80% similarity threshold
+                        is_echo = True
+                        break
         if is_echo:
             logger.info("Echo guard: discarded transcription matching spoken text: \"%s\"", transcription)
             return

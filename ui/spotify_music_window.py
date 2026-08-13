@@ -20,7 +20,7 @@ import math
 import logging
 from functools import partial
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
@@ -109,6 +109,59 @@ class HoverSeekSlider(QSlider):
             self.setToolTip(f"Seek to {m}:{s:02d}")
 
 
+# ── Background Worker Threads for yt-dlp ──────────────────────────────────────
+
+
+class _SearchWorker(QThread):
+    finished = pyqtSignal(str, list)  # query, results
+    failed = pyqtSignal(str, str)     # query, error message
+
+    def __init__(self, query: str, player: MusicPlayer, parent=None):
+        super().__init__(parent)
+        self.query = query
+        self.player = player
+
+    def run(self):
+        try:
+            results = self.player.search_online(self.query, max_results=8)
+            self.finished.emit(self.query, results)
+        except Exception as e:
+            self.failed.emit(self.query, str(e))
+
+
+class _StreamWorker(QThread):
+    finished = pyqtSignal(str)     # title
+    failed = pyqtSignal(str, str)  # title, error message
+
+    def __init__(self, title: str, player: MusicPlayer, parent=None):
+        super().__init__(parent)
+        self.title = title
+        self.player = player
+
+    def run(self):
+        try:
+            self.player.stream_song(self.title)
+            self.finished.emit(self.title)
+        except Exception as e:
+            self.failed.emit(self.title, str(e))
+
+
+class _SavePlaylistWorker(QThread):
+    finished = pyqtSignal(str, str)  # name, result message
+    failed = pyqtSignal(str, str)    # name, error message
+
+    def __init__(self, name: str, parent=None):
+        super().__init__(parent)
+        self.name = name
+
+    def run(self):
+        try:
+            msg = PlaylistManager.save_to_disk(self.name)
+            self.finished.emit(self.name, msg)
+        except Exception as e:
+            self.failed.emit(self.name, str(e))
+
+
 # ── Standalone Spotify Music Window ───────────────────────────────────────────
 
 
@@ -125,6 +178,11 @@ class SpotifyMusicWindow(QMainWindow):
 
         self._player = MusicPlayer.get_instance()
         self._current_track_info = {}
+
+        # Worker thread attributes to manage background yt-dlp tasks
+        self._search_worker = None
+        self._stream_worker = None
+        self._save_worker = None
 
         self._apply_theme()
         self._init_ui()
@@ -887,65 +945,85 @@ class SpotifyMusicWindow(QMainWindow):
         query = self._search_input.text().strip()
         if not query:
             return
+
+        if self._search_worker and self._search_worker.isRunning():
+            self._search_worker.quit()
+            self._search_worker.wait()
+
         self._search_status_lbl.setText(f"Searching for '{query}'...")
         self._search_table.setRowCount(0)
 
-        QApplication.processEvents()
+        self._search_worker = _SearchWorker(query, self._player, parent=self)
+        self._search_worker.finished.connect(self._on_search_finished)
+        self._search_worker.failed.connect(self._on_search_failed)
+        self._search_worker.start()
 
-        try:
-            results = self._player.search_online(query, max_results=8)
-            if not results:
-                self._search_status_lbl.setText(f"No results found for '{query}'.")
-                return
+    def _on_search_finished(self, query: str, results: list):
+        if not results:
+            self._search_status_lbl.setText(f"No results found for '{query}'.")
+            return
 
-            self._search_status_lbl.setText(f"Top YouTube results for '{query}':")
-            self._search_table.setRowCount(len(results))
+        self._search_status_lbl.setText(f"Top YouTube results for '{query}':")
+        self._search_table.setRowCount(len(results))
 
-            for row, r in enumerate(results):
-                title = r.get("title", "Unknown")
-                dur_sec = r.get("duration", 0)
-                dur_str = f"{dur_sec // 60}:{dur_sec % 60:02d}" if dur_sec else "Stream"
+        for row, r in enumerate(results):
+            title = r.get("title", "Unknown")
+            dur_sec = r.get("duration", 0)
+            dur_str = f"{dur_sec // 60}:{dur_sec % 60:02d}" if dur_sec else "Stream"
 
-                item_title = QTableWidgetItem(title)
-                item_artist = QTableWidgetItem("YouTube Stream")
-                item_dur = QTableWidgetItem(dur_str)
+            item_title = QTableWidgetItem(title)
+            item_artist = QTableWidgetItem("YouTube Stream")
+            item_dur = QTableWidgetItem(dur_str)
 
-                self._search_table.setItem(row, 0, item_title)
-                self._search_table.setItem(row, 1, item_artist)
-                self._search_table.setItem(row, 2, item_dur)
+            self._search_table.setItem(row, 0, item_title)
+            self._search_table.setItem(row, 1, item_artist)
+            self._search_table.setItem(row, 2, item_dur)
 
-                act_widget = QWidget()
-                act_layout = QHBoxLayout(act_widget)
-                act_layout.setContentsMargins(4, 0, 4, 0)
-                act_layout.setSpacing(6)
-                act_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            act_widget = QWidget()
+            act_layout = QHBoxLayout(act_widget)
+            act_layout.setContentsMargins(4, 0, 4, 0)
+            act_layout.setSpacing(6)
+            act_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-                play_b = QPushButton("▶")
-                play_b.setFixedSize(26, 26)
-                play_b.setCursor(Qt.CursorShape.PointingHandCursor)
-                play_b.setToolTip("Play track")
-                play_b.setStyleSheet("background-color: #1db954; color: #000; font-weight: bold; border-radius: 13px; border: none;")
-                play_b.clicked.connect(partial(self._play_online_track, title))
-                act_layout.addWidget(play_b)
+            play_b = QPushButton("▶")
+            play_b.setFixedSize(26, 26)
+            play_b.setCursor(Qt.CursorShape.PointingHandCursor)
+            play_b.setToolTip("Play track")
+            play_b.setStyleSheet("background-color: #1db954; color: #000; font-weight: bold; border-radius: 13px; border: none;")
+            play_b.clicked.connect(partial(self._play_online_track, title))
+            act_layout.addWidget(play_b)
 
-                like_b = QPushButton("❤️")
-                like_b.setFixedSize(26, 26)
-                like_b.setCursor(Qt.CursorShape.PointingHandCursor)
-                like_b.setToolTip("Add to Liked Songs")
-                like_b.setStyleSheet("background-color: #282828; color: #ff3366; border-radius: 13px; border: none;")
-                like_b.clicked.connect(partial(self._like_track_dict, {"title": title, "artist": "YouTube Stream"}))
-                act_layout.addWidget(like_b)
+            like_b = QPushButton("❤️")
+            like_b.setFixedSize(26, 26)
+            like_b.setCursor(Qt.CursorShape.PointingHandCursor)
+            like_b.setToolTip("Add to Liked Songs")
+            like_b.setStyleSheet("background-color: #282828; color: #ff3366; border-radius: 13px; border: none;")
+            like_b.clicked.connect(partial(self._like_track_dict, {"title": title, "artist": "YouTube Stream"}))
+            act_layout.addWidget(like_b)
 
-                self._search_table.setCellWidget(row, 3, act_widget)
-        except Exception as e:
-            self._search_status_lbl.setText(f"Search failed: {e}")
+            self._search_table.setCellWidget(row, 3, act_widget)
+
+    def _on_search_failed(self, query: str, error_msg: str):
+        self._search_status_lbl.setText(f"Search failed: {error_msg}")
 
     def _play_online_track(self, title: str):
-        try:
-            self._player.stream_song(title)
-            self._update_player_deck()
-        except Exception as e:
-            logger.warning("Failed to play online track: %s", e)
+        if self._stream_worker and self._stream_worker.isRunning():
+            self._stream_worker.quit()
+            self._stream_worker.wait()
+
+        self._search_status_lbl.setText(f"Starting stream for '{title}'...")
+        self._stream_worker = _StreamWorker(title, self._player, parent=self)
+        self._stream_worker.finished.connect(self._on_stream_finished)
+        self._stream_worker.failed.connect(self._on_stream_failed)
+        self._stream_worker.start()
+
+    def _on_stream_finished(self, title: str):
+        self._search_status_lbl.setText(f"Streaming: '{title}'")
+        self._update_player_deck()
+
+    def _on_stream_failed(self, title: str, error_msg: str):
+        self._search_status_lbl.setText(f"Failed to stream '{title}': {error_msg}")
+        logger.warning("Failed to play online track '%s': %s", title, error_msg)
 
     def _like_track_dict(self, song_info: dict):
         msg = LikedSongsManager.add(song_info)
@@ -1096,8 +1174,22 @@ class SpotifyMusicWindow(QMainWindow):
         self._update_player_deck()
 
     def _save_playlist(self, name: str):
-        msg = PlaylistManager.save_to_disk(name)
-        QMessageBox.information(self, "Save Playlist", msg)
+        if self._save_worker and self._save_worker.isRunning():
+            QMessageBox.warning(self, "Save Playlist", "A playlist is already saving in the background. Please wait.")
+            return
+
+        self._save_worker = _SavePlaylistWorker(name, parent=self)
+        self._save_worker.finished.connect(self._on_save_playlist_finished)
+        self._save_worker.failed.connect(self._on_save_playlist_failed)
+        self._save_worker.start()
+        QMessageBox.information(self, "Save Playlist", f"Downloading songs for playlist '{name}' in the background...")
+
+    def _on_save_playlist_finished(self, name: str, msg: str):
+        QMessageBox.information(self, "Save Playlist Complete", msg)
+        self._load_playlists()
+
+    def _on_save_playlist_failed(self, name: str, error_msg: str):
+        QMessageBox.critical(self, "Save Playlist Error", f"Failed to save playlist '{name}': {error_msg}")
         self._load_playlists()
 
     def _delete_playlist(self, name: str):

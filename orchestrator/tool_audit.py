@@ -32,7 +32,7 @@ MIN_DESCRIPTION_LENGTH = 60
 # Prose identifiers in the system prompt that look like snake_case tool names
 # but are not tools (e.g. parameter names). Keep this list explicit so the
 # prompt-reference check never produces noise.
-_PROMPT_NON_TOOL_IDENTIFIERS = frozenset({"task_id"})
+_PROMPT_NON_TOOL_IDENTIFIERS = frozenset({"task_id", "known_path"})
 
 _SNAKE_CASE_RE = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
 

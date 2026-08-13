@@ -91,13 +91,23 @@ class MoonshineBackend(STTBackend):
             self._model_name = getattr(config, "STT_MOONSHINE_MODEL", "moonshine/tiny")
             logger.info("Loading local Moonshine model '%s'...", self._model_name)
             try:
+                import os
+                import warnings
+                warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
+                os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN_WARNING"] = "1"
+                os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
                 import moonshine
                 self._model = moonshine
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
                 logger.info("Local Moonshine model '%s' ready", self._model_name)
             except Exception as e:
                 try:
+                    import os
                     import moonshine_onnx
                     self._model = moonshine_onnx
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                    os.environ["TRANSFORMERS_OFFLINE"] = "1"
                     logger.info("Local Moonshine (ONNX) model '%s' ready", self._model_name)
                 except Exception:
                     logger.error("Failed to load local Moonshine model '%s': %s", self._model_name, e)

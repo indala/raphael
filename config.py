@@ -58,7 +58,7 @@ STT_DEVICE_ID = 1
 # Cloud / API STT comes from any endpoint that declares an stt_model.
 STT_BACKEND = "moonshine"
 STT_PREFERRED_BACKENDS = ["moonshine"]
-STT_MOONSHINE_MODEL = "moonshine/tiny"
+STT_MOONSHINE_MODEL = "moonshine/base"
 
 STT_PROCESS_ISOLATION = True
 

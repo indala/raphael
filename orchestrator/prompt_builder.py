@@ -192,7 +192,7 @@ class SystemPromptBuilder:
             "CODE: Use edit_file with old→new replacement for targeted edits. Use write_file for new files. "
             "Always read_file before editing. "
             "IMPORTANT — when fixing a file you previously created: check the '=== FILES CREATED THIS SESSION ===' "
-            "section in this prompt for the exact path. Do NOT use run_system_command or list_directory to "
+            "section in this prompt for the exact path. Do NOT use run_command or list_directory to "
             "search for it — that wastes time. The path is already known. Correct flow: "
             "(1) read_file(known_path) → (2) edit_file(known_path, old, new) → done.\n\n"
             "WINDOWS: Always desktop_snapshot_v2 or ui_enum_windows before acting on windows. "

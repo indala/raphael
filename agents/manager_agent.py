@@ -21,7 +21,7 @@ _MANAGER_TOOLS = [
     "list_agents", "delegate_to_agent", "delegate_parallel",
     "web_search", "web_fetch", "get_weather",
     "recall_memory", "save_memory",
-    "process_file", "run_system_command",
+    "process_file", "run_command",
     "capture_screen", "analyze_image",
 ]
 

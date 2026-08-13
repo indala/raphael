@@ -185,8 +185,8 @@ class STTRegistry:
                 result = instance.transcribe(audio)
                 if result.success:
                     result.backend = name
-                    logger.info("STT success via '%s' (%d chars, %.0fms)",
-                                name, len(result.text), result.duration_ms)
+                    logger.info("STT success via '%s' (%d chars, %.0fms) -> \"%s\"",
+                                name, len(result.text), result.duration_ms, result.text)
                     return result
                 last_result = result
                 logger.warning("STT backend '%s' returned failure: %s",

@@ -15,7 +15,7 @@ from orchestrator.core import LLMClient, ToolExecutor
 logger = logging.getLogger(__name__)
 
 _TOOL_MGMT_TOOLS = [
-    "run_system_command", "process_file", "web_search", "web_fetch",
+    "run_command", "process_file", "web_search", "web_fetch",
     "read_file", "write_file",
     "recall_memory", "save_memory",
     "list_agents", "delegate_to_agent",

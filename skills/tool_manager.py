@@ -143,7 +143,7 @@ class ToolManagerSkill(Skill):
     description = "Design, generate, validate, test, review, and register new tools. Also update, version, archive, delete, merge, benchmark, and manage tool metadata."
 
     required_tools: ClassVar[list[str]] = [
-        "run_system_command", "process_file", "web_search", "web_fetch",
+        "run_command", "process_file", "web_search", "web_fetch",
     ]
 
     # ── Pipeline Stages ──────────────────────────────────────────────────
