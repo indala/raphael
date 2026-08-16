@@ -696,7 +696,7 @@ class RaphaelController(QObject):
         self._minion_response_pending = True
         self._compact_chat.set_processing(True)
         self._floating_icon.set_processing(True)
-        self._submit_message(text)
+        self._submit_message(text, input_mode="text")
 
     def _on_tool_executed_event(self, event: str, data: dict):
         """Auto-open popup windows for tool results when in floating minion mode or minion response is pending."""
@@ -1042,7 +1042,11 @@ class RaphaelController(QObject):
             remaining_text = transcription
             if matched_wake_word:
                 import re as re_mod
-                remaining_text = re_mod.sub(re_mod.escape(matched_wake_word), "", transcription, flags=re_mod.IGNORECASE).strip()
+                pattern = rf"(?i)\b(?:hey\s+|hi\s+|hej\s+)?{re_mod.escape(matched_wake_word)}[\s,.:;!?-]*"
+                remaining_text = re_mod.sub(pattern, "", transcription).strip()
+                remaining_text = re_mod.sub(re_mod.escape(matched_wake_word), "", remaining_text, flags=re_mod.IGNORECASE).strip()
+                remaining_text = re_mod.sub(r"^[\s,.:;!?-]+", "", remaining_text)
+                remaining_text = re_mod.sub(r"^(?i)(?:hey|hi|hej)[\s,.:;!?-]+", "", remaining_text).strip()
 
             # Clean up punctuation/spaces from remaining text
             import re as re_mod
@@ -1050,7 +1054,7 @@ class RaphaelController(QObject):
 
             if remaining_clean:
                 logger.info("Wake word + command detected. Processing: '%s'", remaining_text)
-                self._submit_message(remaining_text)
+                self._submit_message(remaining_text, input_mode="voice")
                 return
             else:
                 self.ui.write_log("ai", "Raphael is here.")
@@ -1066,7 +1070,7 @@ class RaphaelController(QObject):
                     self._done()
                 return
 
-        self._submit_message(transcription)
+        self._submit_message(transcription, input_mode="voice")
 
     # ── Memory consolidation ────────────────────────────────────────
 
@@ -1121,9 +1125,10 @@ class RaphaelController(QObject):
         if self._is_processing():
             self.ui.write_log("sys", "Busy processing previous request...")
             return
-        self._submit_message(text)
+        self._submit_message(text, input_mode="text")
 
-    def _submit_message(self, text: str):
+    def _submit_message(self, text: str, input_mode: str = "text"):
+        self._current_input_mode = input_mode
         self._last_interaction_time = time.time()
         self._consolidation_triggered = False
         self.proactive_engine.reset_timer()
@@ -1215,8 +1220,8 @@ class RaphaelController(QObject):
 
         # Process through LLM
         self.ui.set_state("THINKING")
-        logger.info("Thinking...")
-        threading.Thread(target=self._process_llm, args=(text, self._current_file), daemon=True).start()
+        logger.info("Thinking... (Input Mode: %s)", input_mode)
+        threading.Thread(target=self._process_llm, args=(text, self._current_file, input_mode), daemon=True).start()
 
     def _submit_proactive(self, instruction: str):
         """Submit a proactive check-in to the LLM (read-only, no tools).
@@ -1254,7 +1259,7 @@ class RaphaelController(QObject):
 
         threading.Thread(target=_run, daemon=True, name="proactive").start()
 
-    def _process_llm(self, user_input: str, file_path: str | None = None):
+    def _process_llm(self, user_input: str, file_path: str | None = None, input_mode: str = "text"):
         if not self.raphael:
             self.signals.error_occurred.emit("Raphael is still connecting — please wait a moment.")
             return
@@ -1271,7 +1276,7 @@ class RaphaelController(QObject):
         try:
             final_text: str | None = None
             for event in self.raphael.process_message_events(
-                user_input, file_path=file_path,
+                user_input, file_path=file_path, input_mode=input_mode,
             ):
                 if isinstance(event, TokenEvent):
                     self.signals.response_token.emit(event.token)
@@ -1319,11 +1324,67 @@ class RaphaelController(QObject):
             self.ui.log.commit_steps()
             self.ui.status_ticker.clear_status()
 
+    def _filter_tts_for_input_mode(self, text: str, input_mode: str = "text") -> str:
+        """Filter text before sending to TTS engine based on input mode.
+
+        - voice mode: return full text (stripping raw code blocks).
+        - text mode: suppress long unnecessary voice outputs; speak only brief summaries,
+          subheadings, key recommendations, or short responses (< 150 chars).
+        """
+        if not text or not text.strip():
+            return ""
+
+        import re
+
+        clean_text = re.sub(r'```[\s\S]*?```', '', text).strip()
+        if not clean_text:
+            return "I've updated the content on screen."
+
+        if input_mode == "voice":
+            return clean_text
+
+        # --- Text / Chat Input Mode ---
+        if len(clean_text) <= 150 and "\n\n" not in clean_text:
+            return clean_text
+
+        extracted_parts = []
+        lines = clean_text.splitlines()
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith(("#", "###", "##")) or re.match(r'^\*\*[^*]+:\*\*', stripped):
+                heading = re.sub(r'^[#*\s]+', '', stripped).rstrip(':*#').strip()
+                if heading:
+                    extracted_parts.append(heading)
+            elif re.match(r'^(recommendation|note|summary|takeaway|key point|bullet):', stripped, re.IGNORECASE):
+                extracted_parts.append(stripped)
+            elif stripped.startswith(("•", "* ", "- ")) and ("recommend" in stripped.lower() or "suggest" in stripped.lower()):
+                extracted_parts.append(re.sub(r'^[•*-]\s*', '', stripped))
+
+        if extracted_parts:
+            summary_speech = ". ".join(extracted_parts[:3])
+            if len(summary_speech) > 250:
+                summary_speech = summary_speech[:240].rsplit(" ", 1)[0] + "..."
+            return summary_speech
+
+        first_paragraph = lines[0].strip()
+        if len(first_paragraph) > 150:
+            match = re.search(r'[^.!?]+[.!?]', first_paragraph)
+            if match:
+                first_paragraph = match.group(0).strip()
+            else:
+                first_paragraph = first_paragraph[:140].rsplit(" ", 1)[0] + "..."
+        return first_paragraph
+
     def _on_stream_token(self, token: str):
         """Slot: append streaming token to UI and queue complete sentences to TTS immediately."""
         self.ui.log.stream_token("ai", token)
 
         if not state.tts_enabled or state.muted:
+            return
+
+        input_mode = getattr(self, "_current_input_mode", "text")
+        if input_mode != "voice":
+            # For text mode, skip raw sentence-chunk streaming; _show_response will speak concise summary/headings
             return
 
         if not hasattr(self, "_stream_tts_buffer"):
@@ -1344,6 +1405,7 @@ class RaphaelController(QObject):
 
     def _show_response(self, response: str):
         self.ui.write_log("ai", response)
+        input_mode = getattr(self, "_current_input_mode", "text")
 
         # If minion submitted or in floating icon mode, route final response to a popup window
         if self._minion_response_pending or self.is_floating_icon_state():
@@ -1355,26 +1417,38 @@ class RaphaelController(QObject):
             if hasattr(self, "_window_manager"):
                 self._window_manager.show_content("response", "Raphael", response)
             if state.tts_enabled:
-                rem = getattr(self, "_stream_tts_buffer", "").strip()
-                self._stream_tts_buffer = ""
-                if rem:
-                    self._tts_queue.put((rem, lambda: self.signals.processing_done.emit()))
+                if input_mode == "voice":
+                    rem = getattr(self, "_stream_tts_buffer", "").strip()
+                    self._stream_tts_buffer = ""
+                    text_to_speak = rem or response
                 else:
-                    self._tts_queue.put(("", lambda: self.signals.processing_done.emit()))
+                    text_to_speak = self._filter_tts_for_input_mode(response, input_mode="text")
+                if text_to_speak:
+                    self.ui.set_state("SPEAKING")
+                    self._tts_queue.put((text_to_speak, lambda: self.signals.processing_done.emit()))
+                else:
+                    self._done()
             else:
                 self._done()
             return
 
         if state.tts_enabled:
-            # Flush any remaining sentence fragment in the stream buffer
-            rem = getattr(self, "_stream_tts_buffer", "").strip()
-            self._stream_tts_buffer = ""
-            if rem:
-                self.ui.set_state("SPEAKING")
-                self._tts_queue.put((rem, lambda: self.signals.processing_done.emit()))
+            if input_mode == "voice":
+                # Flush remaining sentence fragment from stream buffer
+                rem = getattr(self, "_stream_tts_buffer", "").strip()
+                self._stream_tts_buffer = ""
+                if rem:
+                    self.ui.set_state("SPEAKING")
+                    self._tts_queue.put((rem, lambda: self.signals.processing_done.emit()))
+                else:
+                    self._tts_queue.put(("", lambda: self.signals.processing_done.emit()))
             else:
-                # If everything was streamed, trigger done when queue empties
-                self._tts_queue.put(("", lambda: self.signals.processing_done.emit()))
+                text_to_speak = self._filter_tts_for_input_mode(response, input_mode="text")
+                if text_to_speak:
+                    self.ui.set_state("SPEAKING")
+                    self._tts_queue.put((text_to_speak, lambda: self.signals.processing_done.emit()))
+                else:
+                    self._done()
         else:
             self._done()
 

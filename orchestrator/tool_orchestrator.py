@@ -312,6 +312,15 @@ CORE_FALLBACK_TOOLS: tuple[str, ...] = (
 )
 
 
+UNIVERSAL_CONTROL_TOOLS: tuple[str, ...] = (
+    "set_system_volume",
+    "get_system_volume",
+    "get_raphael_ui_state",
+    "speak",
+    "save_output",
+)
+
+
 class ToolOrchestrator:
     """Manages tool routing, intent classification, schema filtering, and execution health."""
 
@@ -346,6 +355,9 @@ class ToolOrchestrator:
         else:
             for d in domains:
                 tool_names.update(DOMAIN_TOOL_MAP.get(d, ()))
+
+        # Always include essential system control tools
+        tool_names.update(UNIVERSAL_CONTROL_TOOLS)
 
         # Also include all active MCP tool names if MCP tools exist
         all_schemas = get_tool_schemas()

@@ -63,7 +63,10 @@ STT_MOONSHINE_MODEL = "moonshine/base"
 STT_PROCESS_ISOLATION = True
 
 STT_WAKE_WORD_REQUIRED = True
-STT_WAKE_WORDS = ["hey raphael", "raphael", "hey rafael", "rafael"]
+STT_WAKE_WORDS = [
+    "hey raphael", "raphael", "hey rafael", "rafael", "hey raffael", "raffael",
+    "hej raphael", "hej rafael", "hej raffael", "rafal", "refael", "era feo",
+]
 STT_MUTED = False
 STT_AUDIO_INPUT_AVAILABLE = True
 STT_LOG_IGNORED = True
@@ -84,13 +87,22 @@ VAD_ENGINE = "auto"
 VAD_MODEL_PATH = str(
     Path(__file__).resolve().parent / "assets" / "models" / "silero_vad.onnx"
 )
-VAD_RMS_THRESHOLD = 0.005
+VAD_RMS_THRESHOLD = 0.003
+VAD_SILERO_THRESHOLD = 0.35
+VAD_SILERO_EXIT_THRESHOLD = 0.20
+# Microphone hardware/software pre-amp gain in decibels (dB) (e.g. +6.0 dB = 2x volume)
+MIC_INPUT_GAIN_DB = 6.0
+# Audio gain normalization for quiet / low-volume speech
+STT_NORMALIZE_AUDIO = True
+STT_MAX_GAIN = 8.0
 # Max length (ms) of a wake-word probe utterance
 STT_WAKE_PROBE_MS = 1500
 # Min utterance length (ms) before ASR is attempted
 STT_MIN_UTTERANCE_MS = 350
 # Frames (32 ms each) of trailing silence that end an utterance
 STT_VAD_TAIL_FRAMES = 10
+# Conversational follow-up window (seconds) where no wake word is needed after prior interaction
+STT_FOLLOWUP_WINDOW_SECONDS = 25
 
 # Cloud STT fallback keys
 # Cloud STT API keys are shared with LLM backend config above

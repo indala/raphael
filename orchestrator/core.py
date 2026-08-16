@@ -71,8 +71,9 @@ logger = logging.getLogger(__name__)
 def _parse_tool_args(arguments: str | None) -> dict:
     """Parse a tool call's JSON arguments, never raising on malformed input."""
     try:
-        return json.loads(arguments) if arguments else {}
-    except json.JSONDecodeError:
+        parsed = json.loads(arguments) if arguments else {}
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
         return {}
 
 
@@ -178,6 +179,7 @@ class LLMClient:
             base_url=self._ep.base_url,
             api_key=self._ep.api_key or "dummy-key",
             http_client=self._build_http_client(),
+            max_retries=0,
         )
         self.model = model or self._ep.text_model
         self.vision_model = self._ep.vision_model or self.model
@@ -216,6 +218,7 @@ class LLMClient:
             base_url=self._ep.base_url,
             api_key=self._ep.api_key or "dummy-key",
             http_client=self._build_http_client(),
+            max_retries=0,
         )
 
     def _build_fallback_list(self) -> list[str]:
@@ -979,8 +982,8 @@ class ToolExecutor:
         For cacheable read-only tools, returns the cached result if still
         within TTL, avoiding redundant re-execution.
         """
-        if args is None:  # type: ignore[unreachable]
-            args = {}  # type: ignore[unreachable]
+        if not isinstance(args, dict):
+            args = {}
         try:
             from orchestrator.background import get_runner
             runner = get_runner()
@@ -1231,7 +1234,7 @@ class RaphaelOrchestrator:
         logger.info("Context engine set to %s", type(engine).__name__)
 
     @baseline_timed("prompt_build")
-    def _get_system_prompt(self, user_query: str = "", task_context: str = "") -> dict:
+    def _get_system_prompt(self, user_query: str = "", task_context: str = "", input_mode: str = "text") -> dict:
         """Dynamically generate the system prompt using SystemPromptBuilder.
         
         Task 10: Split static (tool guide, policies) and dynamic (memory, time, task) parts.
@@ -1313,6 +1316,9 @@ class RaphaelOrchestrator:
         # Build dynamic sections
         dynamic_prompt = (
             SystemPromptBuilder._build_identity_section(date_str, time_str)
+            + "\n\n"
+            + SystemPromptBuilder._build_input_modality_section(input_mode)
+            + "\n\n"
             + SystemPromptBuilder._build_context_section(
                 spk_ok=spk_ok,
                 tts_ok=tts_ok,
@@ -1320,6 +1326,7 @@ class RaphaelOrchestrator:
                 memory_context=memory_context,
                 raphael_context=raphael_context,
             )
+            + "\n\n"
             + SystemPromptBuilder._build_output_and_knowledge_section(
                 getattr(config, 'SCREENSHOT_DIR', 'outputs')
             )
@@ -1629,7 +1636,7 @@ class RaphaelOrchestrator:
         return None
 
     @baseline_timed("total_turn")
-    def process_message(self, user_input: str, file_path: str | None = None) -> str:
+    def process_message(self, user_input: str, file_path: str | None = None, input_mode: str = "text") -> str:
         """
         Process a user message through the LLM loop.
         Returns the assistant's text response.
@@ -1692,7 +1699,7 @@ class RaphaelOrchestrator:
         self._compact_history()
 
         log_event("System Prompt Build")
-        messages = [self._get_system_prompt(user_input), *self._context_engine.select_context(
+        messages = [self._get_system_prompt(user_input, input_mode=input_mode), *self._context_engine.select_context(
             user_input, self.history, config.MAX_HISTORY
         )]
 
@@ -1820,10 +1827,7 @@ class RaphaelOrchestrator:
                 ]
                 for tool_call in unsafe_calls:
                     func_name = tool_call.function.name
-                    try:
-                        func_args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
-                        func_args = {}
+                    func_args = _parse_tool_args(tool_call.function.arguments)
 
                     logger.info("%s(%s)", func_name, func_args)
                     result = self.executor.execute(func_name, func_args)
@@ -1890,14 +1894,11 @@ class RaphaelOrchestrator:
 
                 # ── Update task progress for next LLM round ──
                 for tc in response.tool_calls:
-                    try:
-                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    except json.JSONDecodeError:
-                        args = {}
+                    args = _parse_tool_args(tc.function.arguments)
                     self._record_tool_step(_task_id, tc.function.name, args)
                 task_context_str = self._get_task_progress(_task_id)
                 if task_context_str:
-                    messages[0] = self._get_system_prompt(user_input, task_context_str)
+                    messages[0] = self._get_system_prompt(user_input, task_context_str, input_mode=input_mode)
 
                 # ── Check for completed sub-agents ──
                 self._check_sub_agent_results(messages, _task_id)
@@ -1945,6 +1946,7 @@ class RaphaelOrchestrator:
         user_input: str,
         on_token: Callable[[str], None] | None = None,
         file_path: str | None = None,
+        input_mode: str = "text",
     ) -> str:
         """
         Process a user message through the LLM loop with token streaming.
@@ -1956,7 +1958,7 @@ class RaphaelOrchestrator:
         Returns the final assistant response as a string (same as process_message).
         """
         final_result: str = ""
-        for event in self.process_message_events(user_input, file_path=file_path):
+        for event in self.process_message_events(user_input, file_path=file_path, input_mode=input_mode):
             if isinstance(event, TokenEvent) and on_token:
                 on_token(event.token)  # type: ignore[misc]
             elif isinstance(event, TaskCompleteEvent):
@@ -1971,6 +1973,7 @@ class RaphaelOrchestrator:
         self,
         user_input: str,
         file_path: str | None = None,
+        input_mode: str = "text",
     ) -> Generator[StreamEvent]:
         """
         Process a user message through the LLM loop, yielding typed events.
@@ -1988,12 +1991,13 @@ class RaphaelOrchestrator:
             ToolStartEvent, ToolResultEvent, ToolErrorEvent, ProgressEvent,
             TaskCompleteEvent, TaskErrorEvent, InterruptedEvent.
         """
-        return stream_with_events(self._process_message_events_raw(user_input, file_path=file_path))
+        return stream_with_events(self._process_message_events_raw(user_input, file_path=file_path, input_mode=input_mode))
 
     def _process_message_events_raw(
         self,
         user_input: str,
         file_path: str | None = None,
+        input_mode: str = "text",
     ) -> Generator[StreamEvent]:
         """
         Process a user message through the LLM loop, yielding typed events.
@@ -2053,7 +2057,7 @@ class RaphaelOrchestrator:
         self._compact_history()
 
         log_event("System Prompt Build")
-        messages = [self._get_system_prompt(user_input), *self._context_engine.select_context(
+        messages = [self._get_system_prompt(user_input, input_mode=input_mode), *self._context_engine.select_context(
             user_input, self.history, config.MAX_HISTORY
         )]
 
@@ -2262,7 +2266,7 @@ class RaphaelOrchestrator:
                     self._record_tool_step(_task_id, tc.function.name, args)
                 task_context_str = self._get_task_progress(_task_id)
                 if task_context_str:
-                    messages[0] = self._get_system_prompt(user_input, task_context_str)
+                    messages[0] = self._get_system_prompt(user_input, task_context_str, input_mode=input_mode)
 
                 continue
 

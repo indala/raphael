@@ -10,7 +10,6 @@ from datetime import datetime
 
 from controller.state import state
 from memory.memory_manager import load_memory
-from orchestrator.core import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +105,7 @@ class StartupManager:
             # 3. Preparing briefing using the rich startup_briefing composer
             self.write_log("sys", "Preparing briefing...")
 
+            from orchestrator.core import LLMClient
             client = LLMClient()
 
             # Warm up KV cache for local LLMs (background thread, non-blocking)

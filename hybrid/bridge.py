@@ -24,6 +24,24 @@ _available = False
 _shutdown_active = False
 
 
+# ── Typed Bridge Exception Hierarchy ─────────────────────────────────────────
+
+class BridgeError(Exception):
+    """Base exception for all hybrid bridge operations."""
+
+
+class BridgeUnavailableError(BridgeError):
+    """Raised when RaphaelBridge.exe is not found or fails to start."""
+
+
+class BridgeTimeoutError(BridgeError):
+    """Raised when a bridge method execution exceeds its timeout."""
+
+
+class BridgeExecutionError(BridgeError):
+    """Raised when the C# bridge returns an explicit execution error."""
+
+
 def _start() -> bool:
     """Launch the bridge subprocess."""
     global _process, _available, _stderr_thread
@@ -507,6 +525,15 @@ class CWindowManager:
     def ShowWindow(title: str) -> bool | None:
         """Show a previously hidden window by title."""
         return LazyBridge.call("window_show", title)
+
+    @staticmethod
+    def GetActiveWindowElements(max_depth: int = 3) -> list[dict] | None:
+        """Inspect UI Automation element tree of the active window (buttons, inputs, labels).
+
+        Returns:
+            List of element dicts {'name': str, 'control_type': str, 'rect': dict, 'enabled': bool} or None.
+        """
+        return LazyBridge.call("window_get_elements", max_depth)
 
 
 class CPowerManager:

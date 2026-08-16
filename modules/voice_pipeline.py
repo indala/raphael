@@ -154,9 +154,11 @@ class VadEngine:
         if self._silero is not None:
             try:
                 prob = self._silero.prob_speech(frame)
-                if prob >= 0.50:
+                silero_thresh = float(getattr(config, "VAD_SILERO_THRESHOLD", 0.35))
+                silero_exit = float(getattr(config, "VAD_SILERO_EXIT_THRESHOLD", 0.20))
+                if prob >= silero_thresh:
                     self._active = True
-                elif prob <= 0.35:
+                elif prob <= silero_exit:
                     self._active = False
                 return self._active
             except Exception as e:
@@ -349,7 +351,12 @@ class GatedDetector:
         if status:
             logger.debug("VAD gate audio status: %s", status)
         try:
-            self._frame_q.put_nowait(np.array(indata[:, 0], dtype=np.float32))
+            raw = np.array(indata[:, 0], dtype=np.float32)
+            gain_db = float(getattr(config, "MIC_INPUT_GAIN_DB", 6.0))
+            if gain_db != 0.0:
+                gain_multiplier = 10.0 ** (gain_db / 20.0)
+                raw = np.clip(raw * gain_multiplier, -1.0, 1.0)
+            self._frame_q.put_nowait(raw)
         except queue.Full:
             pass  # drop audio rather than block the PortAudio thread
 
@@ -406,11 +413,12 @@ class GatedDetector:
                     self._in_speech = False
                     self._silence = 0
                     self._too_long = False
-                    # End the armed window only after a real command;
-                    # a wake probe that just armed keeps listening.
+                    # Keep conversational follow-up window active after a real command
                     if self._wake_required and self._armed and was_command:
-                        self._armed = False
-                        self._emit_state("SLEEPING")
+                        followup = float(getattr(config, "STT_FOLLOWUP_WINDOW_SECONDS", 25))
+                        self._armed = True
+                        self._armed_until = time.time() + followup
+                        self._emit_state("LISTENING")
             else:
                 self._buf = []
 
@@ -446,8 +454,12 @@ class GatedDetector:
                 return False
             remaining = self._strip_wake(text, word)
             if remaining:
-                # "hey raphael open notepad" — deliver the command directly
+                # "hey raphael open notepad" — deliver the command directly and arm for follow-up window
                 logger.info("VAD gate: wake + command in one utterance")
+                followup = float(getattr(config, "STT_FOLLOWUP_WINDOW_SECONDS", 25))
+                self._armed = True
+                self._armed_until = time.time() + followup
+                self._emit_state("LISTENING")
                 self._push(remaining)
                 return True
             self._armed = True
@@ -459,6 +471,13 @@ class GatedDetector:
         text = self._transcribe(audio)
         if text and text.strip():
             logger.debug('VAD gate transcript: "%s"', text[:80])
+            if self._is_dismissal(text):
+                self._armed = False
+                self._emit_state("SLEEPING")
+            else:
+                followup = float(getattr(config, "STT_FOLLOWUP_WINDOW_SECONDS", 25))
+                self._armed = True
+                self._armed_until = time.time() + followup
             self._push(text)
             return True
         return False
@@ -470,7 +489,14 @@ class GatedDetector:
     def _transcribe(self, audio_f32) -> str:
         if not self._batch_backends:
             return ""
-        pcm = (np.clip(np.asarray(audio_f32, dtype=np.float32), -1.0, 1.0) * 32767).astype(
+        audio = np.asarray(audio_f32, dtype=np.float32)
+        if bool(getattr(config, "STT_NORMALIZE_AUDIO", True)) and audio.size > 0:
+            peak = float(np.max(np.abs(audio)))
+            if peak > 0.003:
+                max_gain = float(getattr(config, "STT_MAX_GAIN", 6.0))
+                gain = min(0.85 / peak, max_gain)
+                audio = audio * gain
+        pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(
             "<i2"
         ).tobytes()
         try:
@@ -491,23 +517,51 @@ class GatedDetector:
     def _normalize(text: str) -> str:
         return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
+    @staticmethod
+    def _phonetic_normalize(text: str) -> str:
+        s = re.sub(r"[^\w\s]", "", text.lower()).strip()
+        # Collapse ph -> f, ff -> f, multiple vowels
+        return s.replace("ph", "f").replace("ff", "f")
+
     def _match_wake(self, text: str):
-        """Return (matched, wake_word) using bidirectional substring match."""
+        """Return (matched, wake_word) using phonetic and bidirectional substring match."""
         clean = self._normalize(text)
+        phonetic_clean = self._phonetic_normalize(text)
         if not clean:
             return False, None
         for wake_word in self._wake_words:
-            if wake_word in clean:
+            norm_wake = self._normalize(wake_word)
+            phonetic_wake = self._phonetic_normalize(wake_word)
+            if norm_wake in clean or clean in norm_wake:
                 return True, wake_word
-            if clean in wake_word:
-                return True, clean
+            if phonetic_wake in phonetic_clean or phonetic_clean in phonetic_wake:
+                return True, wake_word
         return False, None
+
+    DISMISSAL_PHRASES = {
+        "bye", "goodbye", "good bye", "that is all", "thats all",
+        "thank you", "thanks", "go to sleep", "sleep"
+    }
+
+    def _is_dismissal(self, text: str) -> bool:
+        clean = self._normalize(text)
+        return clean in self.DISMISSAL_PHRASES or any(
+            clean.startswith(d) for d in ("bye", "goodbye", "thanks", "thank you")
+        )
 
     def _strip_wake(self, text: str, matched: str | None) -> str:
         remaining = text
         if matched:
-            remaining = re.sub(re.escape(matched), "", remaining, flags=re.IGNORECASE)
-        return re.sub(r"[^\w\s]", "", remaining).strip()
+            escaped = re.escape(matched)
+            pattern = rf"\b(?:hey\s+|hi\s+|hej\s+)?{escaped}[\s,.:;!?-]*"
+            remaining = re.sub(pattern, "", remaining, flags=re.IGNORECASE).strip()
+            remaining = re.sub(escaped, "", remaining, flags=re.IGNORECASE).strip()
+            for variant in ("raphael", "rafael", "raffael", "rafal", "era feo"):
+                v_pat = rf"\b(?:hey\s+|hi\s+|hej\s+)?{variant}[\s,.:;!?-]*"
+                remaining = re.sub(v_pat, "", remaining, flags=re.IGNORECASE).strip()
+        remaining = re.sub(r"^[\s,.:;!?-]+", "", remaining)
+        remaining = re.sub(r"^(?:hey|hi|hej)[\s,.:;!?-]+", "", remaining, flags=re.IGNORECASE)
+        return remaining.strip()
 
     def _emit_state(self, new_state: str):
         if self._state_callback:

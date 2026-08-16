@@ -883,54 +883,49 @@ class MusicPlayer:
     # ── Internal: Playback ──────────────────────────────────────────────────
 
     def _play_entry(self, entry: SongEntry):
-        """Play a fully-decoded song entry in chunks under _AUDIO_LOCK."""
+        """Play a fully-decoded song entry continuously using persistent OutputStream."""
         if entry.samples is None or entry.sample_rate <= 0:
             return
         sr = entry.sample_rate
         total = len(entry.samples)
-        cf = int(CHUNK_SECONDS * sr)
+        channels = 1 if entry.samples.ndim == 1 else entry.samples.shape[1]
+        block_size = 2048
         off = min(self._playhead_frames, total - 1) if self._playhead_frames < total else 0
 
-        while off < total:
-            # ── Interrupt checks between chunks ──
-            if self._music_interrupted.is_set():
-                self._music_interrupted.clear()
-                return
-            if _interrupted.is_set():
-                return
+        with _AUDIO_LOCK:
+            # pyrefly: ignore [missing-import]
+            import sounddevice as sd
+            try:
+                with sd.OutputStream(samplerate=sr, channels=channels, dtype="float32", blocksize=block_size) as stream:
+                    while off < total:
+                        # ── Interrupt checks ──
+                        if self._music_interrupted.is_set():
+                            self._music_interrupted.clear()
+                            return
+                        if _interrupted.is_set():
+                            return
 
-            # ── Pause handling ──
-            if self._state == PlaybackState.PAUSED:
-                while self._state == PlaybackState.PAUSED:
-                    if self._music_interrupted.is_set():
-                        self._music_interrupted.clear()
-                        return
-                    if _interrupted.is_set():
-                        return
-                    self._pause_event.wait(0.05)
-                continue  # type: ignore[unreachable]
+                        # ── Pause handling ──
+                        if self._state == PlaybackState.PAUSED:
+                            while self._state == PlaybackState.PAUSED:
+                                if self._music_interrupted.is_set():
+                                    self._music_interrupted.clear()
+                                    return
+                                if _interrupted.is_set():
+                                    return
+                                self._pause_event.wait(0.05)
 
-            end = min(off + cf, total)
-            chunk = entry.samples[off:end].astype(np.float32) * self._volume
-
-            with _AUDIO_LOCK:
-                # pyrefly: ignore [missing-import]
-                import sounddevice as sd
-                sd.stop()
-                sd.play(chunk, sr)
-                while sd.get_stream().active:
-                    if self._music_interrupted.is_set() or _interrupted.is_set():
-                        sd.stop()
-                        self._music_interrupted.clear()
-                        return
-                    if self._state == PlaybackState.PAUSED:
-                        sd.stop()  # type: ignore[unreachable]
-                        off = self._playhead_frames  # preserve position
-                        break
-                    time.sleep(0.05)
-                else:
-                    off = end
-                    self._playhead_frames = off
+                        end = min(off + block_size, total)
+                        chunk = entry.samples[off:end].astype(np.float32) * self._volume
+                        if chunk.ndim == 1 and channels > 1:
+                            chunk = np.column_stack([chunk] * channels)
+                        elif chunk.ndim == 2 and channels == 1:
+                            chunk = chunk[:, 0]
+                        stream.write(chunk)
+                        off = end
+                        self._playhead_frames = off
+            except Exception as e:
+                logger.debug("Local audio playback stream error: %s", e)
 
     def _stream_from_proc(self, proc: subprocess.Popen, entry: SongEntry | None = None, start_sec: float = 0.0):
         """Stream and play audio from a yt-dlp pipe via ffmpeg → raw PCM → sounddevice.

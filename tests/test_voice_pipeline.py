@@ -116,7 +116,7 @@ def test_always_listen_transcribes_utterance():
 
 
 def test_wake_mode_arms_then_transcribes_command():
-    texts = iter(["hey raphael", "open notepad"])
+    texts = iter(["hey raphael", "open notepad", "bye"])
     d = make_detector(wake_required=True, transcribe=lambda a: next(texts))
 
     # Wake probe utterance — matches, so the detector arms but pushes nothing
@@ -124,9 +124,14 @@ def test_wake_mode_arms_then_transcribes_command():
     assert d._armed is True
     assert d.transcript_queue.empty()
 
-    # Next utterance is the command
+    # Next utterance is the command — stays armed for follow-up window
     feed_utterance(d, 15)
     assert d.transcript_queue.get() == "open notepad"
+    assert d._armed is True
+
+    # Dismissal utterance puts detector to sleep
+    feed_utterance(d, 10)
+    assert d.transcript_queue.get() == "bye"
     assert d._armed is False
 
 
@@ -145,7 +150,7 @@ def test_wake_plus_command_in_single_utterance():
     feed_utterance(d, 15)
 
     assert d.transcript_queue.get() == "open notepad"
-    assert d._armed is False
+    assert d._armed is True
 
 
 def test_state_goes_listening_during_wake_probe_stt():

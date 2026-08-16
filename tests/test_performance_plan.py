@@ -325,11 +325,11 @@ class TestProcessIsolation:
 
         lanes = ProcessingLanes()
 
-        # Simulate user message
-        user_gen = lanes.begin_user()
-
-        # Proactive check starts in parallel (but generation bumped)
+        # Proactive check starts
         proactive_gen = lanes.begin_proactive()
+
+        # Simulate user message preempting proactive check
+        user_gen = lanes.begin_user()
 
         # When proactive result arrives, it should be stale
         assert lanes.is_stale("proactive", proactive_gen)

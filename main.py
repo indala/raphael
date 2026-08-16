@@ -289,6 +289,22 @@ def main():
 
     validate_config()
 
+    # Pre-warm native bridge & SQLite WAL concurrently in background during splash rendering
+    def _prewarm_background():
+        try:
+            from memory.sqlite_store import MemoryStore
+            store = MemoryStore()
+            store._conn()
+        except Exception:
+            pass
+        try:
+            from hybrid.bridge import is_available
+            is_available()
+        except Exception:
+            pass
+
+    threading.Thread(target=_prewarm_background, daemon=True, name="startup-prewarm").start()
+
     ui.update_splash(20, "Loading plugins and extensions...")
     from orchestrator.plugin import discover_and_register, startup as plugin_startup
     discover_and_register()

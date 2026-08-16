@@ -39,6 +39,7 @@ import logging
 import re
 import sqlite3
 import threading
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -72,7 +73,7 @@ _SENSITIVE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-_SCHEMA_SQL = """
+_BASE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memories (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     category  TEXT NOT NULL,
@@ -85,7 +86,9 @@ CREATE TABLE IF NOT EXISTS memories (
 
 CREATE INDEX IF NOT EXISTS idx_category ON memories(category);
 CREATE INDEX IF NOT EXISTS idx_updated  ON memories(updated DESC);
+"""
 
+_FTS_SCHEMA_SQL = """
 -- FTS5 virtual table for full-text search over key + value
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     category UNINDEXED,
@@ -116,12 +119,13 @@ END;
 
 
 class MemoryStore:
-    """Thread-safe SQLite memory store with FTS5 full-text search."""
+    """Thread-safe SQLite memory store with FTS5 full-text search and fallback."""
 
     def __init__(self, db_path: Path | None = None):
         self._db_path = db_path or DB_PATH
         self._local = threading.local()
         self._write_lock = threading.Lock()
+        self._fts_available = False
         self._init_db()
 
     def _conn(self) -> sqlite3.Connection:
@@ -145,9 +149,24 @@ class MemoryStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._write_lock:
             conn = self._conn()
-            conn.executescript(_SCHEMA_SQL)
+            conn.executescript(_BASE_SCHEMA_SQL)
             conn.commit()
-        logger.debug("MemoryStore: database initialised at %s", self._db_path)
+            try:
+                conn.executescript(_FTS_SCHEMA_SQL)
+                conn.commit()
+                self._fts_available = True
+            except sqlite3.OperationalError as e:
+                logger.warning(
+                    "MemoryStore: SQLite FTS5 extension not available (%s). "
+                    "Falling back to standard LIKE search.",
+                    e,
+                )
+                self._fts_available = False
+        logger.debug(
+            "MemoryStore: database initialised at %s (FTS5: %s)",
+            self._db_path,
+            self._fts_available,
+        )
 
     # ── Write API ────────────────────────────────────────────────────────────
 
@@ -303,6 +322,9 @@ class MemoryStore:
         if not query or not query.strip():
             return []
 
+        if not self._fts_available:
+            return self._like_search(query, category, limit)
+
         fts_query = _build_fts_query(query)
         if not fts_query:
             return []
@@ -383,6 +405,86 @@ class MemoryStore:
              "value": r["value"], "updated": r["updated"], "score": 0.0}
             for r in rows
         ]
+
+    def hybrid_search(
+        self,
+        query: str,
+        category: str | None = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+        rrf_k: int = 60,
+    ) -> list[dict[str, str | float]]:
+        """Hybrid search combining BM25/FTS5 keyword ranking with semantic matching via RRF.
+
+        Uses Reciprocal Rank Fusion (RRF) (inspired by OpenJarvis/OpenClaw):
+            RRF_score(d) = sum(1 / (k + rank_i))
+        """
+        if not query or not query.strip():
+            return []
+
+        # 1. Exact/BM25 keyword search results
+        keyword_results = self.search(query, category=category, limit=limit * 2)
+
+        # 2. Semantic token overlap / partial key match ranking
+        tokens = {t.lower() for t in re.findall(r"\w+", query) if len(t) > 2}
+        all_entries: list[tuple[str, str, str, str]] = []
+        if category:
+            cat_dict = self.get_category(category)
+            for k, data in cat_dict.items():
+                all_entries.append((category, k, data["value"], data["updated"]))
+        else:
+            full = self.load_all()
+            for cat, kvs in full.items():
+                for k, data in kvs.items():
+                    all_entries.append((cat, k, data["value"], data["updated"]))
+
+        scored_semantic = []
+        for cat, k, val, upd in all_entries:
+            if not tokens:
+                break
+            text = f"{k} {val}".lower()
+            overlap = sum(1 for t in tokens if t in text)
+            if overlap > 0:
+                scored_semantic.append({
+                    "category": cat,
+                    "key": k,
+                    "value": val,
+                    "updated": upd,
+                    "match_ratio": overlap / len(tokens),
+                })
+        scored_semantic.sort(key=lambda x: x["match_ratio"], reverse=True)
+        semantic_results = scored_semantic[:limit * 2]
+
+        # 3. Reciprocal Rank Fusion
+        rrf_scores: dict[tuple[str, str], float] = defaultdict(float)
+        item_map: dict[tuple[str, str], dict] = {}
+
+        for rank, item in enumerate(keyword_results, start=1):
+            key_id = (str(item["category"]), str(item["key"]))
+            rrf_scores[key_id] += 1.0 / (rrf_k + rank)
+            item_map[key_id] = item
+
+        for rank, item in enumerate(semantic_results, start=1):
+            key_id = (str(item["category"]), str(item["key"]))
+            rrf_scores[key_id] += 1.0 / (rrf_k + rank)
+            if key_id not in item_map:
+                val = item["value"]
+                if _SENSITIVE_PATTERNS.search(item["key"]):
+                    val = "[redacted]"
+                item_map[key_id] = {
+                    "category": item["category"],
+                    "key": item["key"],
+                    "value": val,
+                    "updated": item["updated"],
+                }
+
+        # Sort by fused RRF score
+        sorted_keys = sorted(rrf_scores.keys(), key=lambda k: rrf_scores[k], reverse=True)
+        final_results = []
+        for k_id in sorted_keys[:limit]:
+            res = dict(item_map[k_id])
+            res["score"] = round(rrf_scores[k_id], 6)
+            final_results.append(res)
+        return final_results
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 

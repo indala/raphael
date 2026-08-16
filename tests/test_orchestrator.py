@@ -158,6 +158,16 @@ def test_tool_executor_execute_with_none_args():
     assert "Failed to get mouse position" in result or "Current mouse position" in result
 
 
+def test_parse_tool_args_handles_null_and_malformed():
+    """_parse_tool_args should always return a valid dict, never None or crash."""
+    from orchestrator.core import _parse_tool_args
+    assert _parse_tool_args("null") == {}
+    assert _parse_tool_args(None) == {}
+    assert _parse_tool_args("") == {}
+    assert _parse_tool_args("{invalid json") == {}
+    assert _parse_tool_args('{"key": "val"}') == {"key": "val"}
+
+
 # ── RaphaelOrchestrator tests ──
 
 

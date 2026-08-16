@@ -92,7 +92,6 @@ class SystemPromptBuilder:
     )
 
     @staticmethod
-    @staticmethod
     def build(
         date_str: str,
         time_str: str,
@@ -104,10 +103,12 @@ class SystemPromptBuilder:
         screenshot_dir: str = "outputs",
         proactive_instruction: str | None = None,
         task_context: str | None = None,
+        input_mode: str = "text",
     ) -> str:
         """Assemble the complete system prompt from modular sections."""
         sections = [
             SystemPromptBuilder._build_identity_section(date_str, time_str),
+            SystemPromptBuilder._build_input_modality_section(input_mode),
             SystemPromptBuilder._build_context_section(
                 spk_ok=spk_ok,
                 tts_ok=tts_ok,
@@ -130,6 +131,23 @@ class SystemPromptBuilder:
             sections.append(f"=== PROACTIVE CHECK ===\n{proactive_instruction}")
 
         return "\n\n".join(sec for sec in sections if sec.strip())
+
+    @staticmethod
+    def _build_input_modality_section(input_mode: str = "text") -> str:
+        if input_mode == "voice":
+            return (
+                "=== USER INPUT MODALITY: VOICE (STT) ===\n"
+                "• The user provided this prompt via speech / microphone (STT).\n"
+                "• The user is LISTENING and interacting hands-free (may not be looking at the screen).\n"
+                "• Provide a clear, natural, conversational response suitable for text-to-speech."
+            )
+        else:
+            return (
+                "=== USER INPUT MODALITY: TEXT (CHAT) ===\n"
+                "• The user typed this prompt via chat UI.\n"
+                "• The user is READING the screen visually.\n"
+                "• Provide a complete formatted text response. Spoken TTS will be concise (summaries/subheadings only)."
+            )
 
     @staticmethod
     def _build_identity_section(date_str: str, time_str: str) -> str:
