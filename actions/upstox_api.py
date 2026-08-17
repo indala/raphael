@@ -32,6 +32,7 @@ def _search_instrument(query: str) -> str | None:
     Results are cached locally to avoid repeated API calls.
     """
     import urllib.request
+    import urllib.error
     import json
 
     headers = _headers()
@@ -41,7 +42,7 @@ def _search_instrument(query: str) -> str | None:
     url = (
         f"{_BASE_URL}/instruments/search"
         f"?query={urllib.request.quote(query)}"  # type: ignore[attr-defined]
-        f"&exchanges=NSE&segments=EQ&records=1"
+        f"&exchanges=NSE&segments=EQ&page_size=10"
     )
     try:
         with urllib.request.urlopen(
@@ -49,7 +50,18 @@ def _search_instrument(query: str) -> str | None:
         ) as resp:
             data = json.loads(resp.read().decode())
             if data.get("status") == "success" and data.get("data"):
-                instrument = data["data"][0]
+                items = data["data"]
+                # 1. Prefer exact trading symbol match
+                for item in items:
+                    sym = item.get("trading_symbol", "")
+                    if sym.upper() == query.upper():
+                        key = item.get("instrument_key")
+                        if key:
+                            _INSTRUMENT_CACHE[query.upper()] = key
+                            return key
+
+                # 2. Fallback to first returned match
+                instrument = items[0]
                 key = instrument.get("instrument_key")
                 symbol = instrument.get("trading_symbol", "")
                 if key:
@@ -57,6 +69,11 @@ def _search_instrument(query: str) -> str | None:
                     if symbol and symbol.upper() != query.upper():
                         _INSTRUMENT_CACHE[symbol.upper()] = key
                 return key  # type: ignore[no-any-return]
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            logger.warning("Upstox API token is expired or invalid (HTTP 401). Please update UPSTOX_ANALYTICS_API in settings.")
+        else:
+            logger.debug("Instrument search HTTP %d for '%s': %s", e.code, query, e)
     except Exception as e:
         logger.debug("Instrument search failed for '%s': %s", query, e)
     return None
