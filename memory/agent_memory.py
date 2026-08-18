@@ -19,6 +19,7 @@ Data flow:
 import json
 import logging
 import threading
+import time as _time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,10 @@ import config
 AGENT_MEMORY_PATH = config.ROAMING_DIR / "memory" / "agent_evolution.json"
 
 _MAX_INTERACTIONS = 50  # ring buffer per agent
-_CONSOLIDATION_THRESHOLD = 30  # auto-consolidate after this many interactions per agent
+_CONSOLIDATION_THRESHOLD = 30  # auto-consolidate after this many NEW interactions per agent
+_CONSOLIDATION_COOLDOWN_SECONDS = 600.0  # minimum 10 minutes between consolidation runs
 _consolidation_lock = threading.Lock()
+_last_consolidation_time: float = 0.0
 
 
 # ──────────────────────────────────────────────
@@ -69,11 +72,13 @@ def _ensure_agent(memory: dict, agent_name: str) -> dict:
             "interactions": [],
             "corrections": [],
             "rules": [],
+            "last_consolidated_count": 0,
         }
     ns = memory[agent_name]
     ns.setdefault("interactions", [])
     ns.setdefault("corrections", [])
     ns.setdefault("rules", [])
+    ns.setdefault("last_consolidated_count", 0)
     return ns  # type: ignore[no-any-return]
 
 
@@ -147,8 +152,13 @@ def maybe_consolidate():
     """Check if any agent has exceeded the interaction threshold and trigger consolidation.
 
     Runs consolidation in a background thread to avoid blocking the caller.
-    Uses a lock to prevent concurrent consolidation passes.
+    Uses a lock to prevent concurrent consolidation passes and enforces cooldown.
     """
+    global _last_consolidation_time
+    now = _time.monotonic()
+    if _last_consolidation_time > 0 and (now - _last_consolidation_time) < _CONSOLIDATION_COOLDOWN_SECONDS:
+        return
+
     if not _consolidation_lock.acquire(blocking=False):
         return  # already consolidating
 
@@ -160,11 +170,12 @@ def maybe_consolidate():
             needs_consolidation = False
             for agent_name, agent_data in memory.items():
                 interactions = agent_data.get("interactions", [])
-                if len(interactions) >= _CONSOLIDATION_THRESHOLD:
+                last_count = agent_data.get("last_consolidated_count", 0)
+                if len(interactions) - last_count >= _CONSOLIDATION_THRESHOLD:
                     needs_consolidation = True
                     break
             if needs_consolidation:
-                logger.info("Auto-consolidation triggered (threshold=%d)", _CONSOLIDATION_THRESHOLD)
+                logger.info("Auto-consolidation triggered (threshold=%d new interactions)", _CONSOLIDATION_THRESHOLD)
                 consolidate()
         except Exception as e:
             logger.debug("Auto-consolidation check failed: %s", e)
@@ -307,6 +318,9 @@ def consolidate():
 
     Called periodically during idle time or after significant interaction counts.
     """
+    global _last_consolidation_time
+    _last_consolidation_time = _time.monotonic()
+
     memory = _load()
     if not memory:
         return
@@ -315,6 +329,10 @@ def consolidate():
         rules = agent_data.get("rules", [])
         corrections = agent_data.get("corrections", [])
         interactions = agent_data.get("interactions", [])
+
+        # Record interaction count and timestamp at consolidation point
+        agent_data["last_consolidated_count"] = len(interactions)
+        agent_data["last_consolidated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         # Skip agents with little data
         if len(rules) < 3 and len(corrections) < 3:

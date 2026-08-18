@@ -279,8 +279,10 @@ class SystemPromptBuilder:
     @staticmethod
     def _build_failure_section() -> str:
         return (
-            "=== FAILURE & UNCERTAINTY ===\n"
-            "• Never pretend a tool succeeded when it failed. Explain, retry, or use an alternative.\n"
+            "=== FAILURE, ACCURACY & TOOL AWARENESS ===\n"
+            "• HONEST OUTCOME REPORTING: Always read tool output carefully. If tool calls returned 'Error: ...', 'Failed ...', or had unexpected argument errors, NEVER pretend the task succeeded or claim completion. Report the actual outcome or error truthfully.\n"
+            "• KEYBOARD SHORTCUTS: Always use `ui_hotkey(keys=['win', 'shift', 's'])` for keyboard shortcut combinations (Win+Shift+S, Ctrl+C, Alt+Tab, Win+R). Never call `ui_press_key` sequentially for combinations.\n"
+            "• MOUSE ACTIONS: Use `ui_click` to click, `ui_drag(x1, y1, x2, y2)` to drag-and-select. NEVER pass mouse commands to `ui_press_key`.\n"
             "• State uncertainty clearly rather than guessing.\n"
             "• INTERRUPT REVERIFY: If user interrupts mid-task, call `desktop_snapshot` "
             "before continuing — coordinates/windows may have changed."
@@ -291,12 +293,10 @@ class SystemPromptBuilder:
         return (
             "=== AGENT DELEGATION ===\n"
             "Use `list_agents` to see available sub-agents.\n"
-            "• `delegate_background(agent, query)` — PREFERRED. Returns immediately. "
-            "Acknowledge user and retrieve result with `check_task(task_id)` later.\n"
-            "• `delegate_to_agent(agent, query)` — only when you need the result inline "
-            "before responding.\n"
-            "• `check_task(task_id)` — get result from a background task.\n"
-            "Fast acknowledgement is better than making the user wait."
+            "• `delegate_to_agent(agent, query)` — USE FOR DIRECT QUESTIONS & IMMEDIATE ANSWERS (e.g. search queries, stock analysis, code generation, memory lookups) where the user expects an answer in the current turn.\n"
+            "• `delegate_background(agent, query)` — USE FOR LONG-RUNNING / INDEPENDENT BACKGROUND TASKS (e.g. batch jobs, background monitoring). Returns immediately with a task ID.\n"
+            "• `check_task(task_id)` — get results from a background task.\n"
+            "Always prefer providing complete, direct answers to the user's questions."
         )
 
     @staticmethod

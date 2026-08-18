@@ -56,8 +56,9 @@ def _snap_to_screen_edge(pos: QPoint, width: int = _ICON_SIZE, height: int = _IC
 class FloatingIcon(QWidget):
     """Draggable always-on-top Raphael icon that lives on the desktop."""
 
-    double_clicked = pyqtSignal()
     single_clicked = pyqtSignal()
+    double_clicked = pyqtSignal()
+    triple_clicked = pyqtSignal()
     right_clicked = pyqtSignal(QPoint)  # emitted with global position on right-click
     dragged = pyqtSignal(QPoint)  # emitted while being dragged with current global pos
 
@@ -71,16 +72,17 @@ class FloatingIcon(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(_ICON_SIZE, _ICON_SIZE)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setToolTip("Raphael Desktop Assistant — Drag to move • Double-click to chat • Right-click for options")
+        self.setToolTip("Raphael Desktop Assistant — Drag to move • Double-click to chat • 3-clicks to stop/reopen")
 
-        # Drag state
+        # Drag & Click state (supports single, double, triple clicks)
         self._dragging = False
+        self._drag_start_pos = QPoint()
         self._drag_offset = QPoint()
+        self._click_count = 0
         self._click_timer = QTimer()
         self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(250)
-        self._click_timer.timeout.connect(self._on_single_click)
-        self._pending_click = False
+        self._click_timer.setInterval(320)
+        self._click_timer.timeout.connect(self._on_click_timeout)
 
         # Pulsing glow animation state
         self._glow_alpha = 0
@@ -179,16 +181,15 @@ class FloatingIcon(QWidget):
             if self._dragging:
                 self._dragging = False
                 moved = (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength()
-                if moved < 5:
+                if moved < 6:
                     # It was a click, not a drag
-                    if self._pending_click:
-                        # Second click → double click
+                    self._click_count += 1
+                    if self._click_count == 3:
                         self._click_timer.stop()
-                        self._pending_click = False
-                        self.double_clicked.emit()
+                        self._click_count = 0
+                        self.triple_clicked.emit()
                     else:
-                        self._pending_click = True
-                        self._click_timer.start()
+                        self._click_timer.start(320)
             event.accept()
         elif event.button() == Qt.MouseButton.RightButton:
             pos = event.globalPosition().toPoint()
@@ -203,10 +204,13 @@ class FloatingIcon(QWidget):
             self.dragged.emit(new_pos + QPoint(_ICON_SIZE // 2, _ICON_SIZE // 2))
             event.accept()
 
-    def _on_single_click(self):
-        if self._pending_click:
-            self._pending_click = False
+    def _on_click_timeout(self):
+        count = self._click_count
+        self._click_count = 0
+        if count == 1:
             self.single_clicked.emit()
+        elif count == 2:
+            self.double_clicked.emit()
 
     # ── Glow animation ──
 
@@ -257,9 +261,9 @@ class CompactChatInput(QWidget):
     """Small floating chat input that appears near the minion icon.
 
     Features:
-    - Dynamic height that grows with content (up to max)
-    - Follows the floating icon when it is dragged
-    - Single toggle button (Send / Stop)
+    - Dynamic height that grows smoothly with content
+    - Automatically closes on message submission
+    - Follows the floating icon when dragged
     """
 
     message_submitted = pyqtSignal(str)
@@ -267,9 +271,8 @@ class CompactChatInput(QWidget):
     expand_requested = pyqtSignal()
     closed = pyqtSignal()
 
-    _MIN_HEIGHT = 100
-    _MAX_HEIGHT = 260
-    _LINE_HEIGHT = 22  # approximate px per line
+    _MIN_HEIGHT = 86
+    _MAX_HEIGHT = 280
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -291,20 +294,23 @@ class CompactChatInput(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
 
-        # Text input — no fixed height; dynamic via _adjust_height
+        # Text input — dynamic height via _adjust_height
         self._input = QTextEdit()
         self._input.setPlaceholderText("Ask Raphael...")
-        self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setStyleSheet(
             "QTextEdit { background: #0d1117; color: #c9d1d9; border: 1px solid #333; "
-            "border-radius: 6px; padding: 6px; font-size: 13px; }"
+            "border-radius: 6px; padding: 6px 8px; font-size: 13px; }"
+            "QScrollBar:vertical { width: 4px; background: transparent; }"
+            "QScrollBar::handle:vertical { background: #444; border-radius: 2px; }"
         )
         self._input.installEventFilter(self)
         self._input.textChanged.connect(self._adjust_height)
+        self._input.document().documentLayout().documentSizeChanged.connect(lambda _: self._adjust_height())
         layout.addWidget(self._input)
 
-        # Action buttons row (Expand + Send / Stop)
+        # Action buttons row (Expand + Send)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
@@ -328,8 +334,8 @@ class CompactChatInput(QWidget):
         layout.addLayout(btn_row)
 
         # Initial size
-        self.setFixedHeight(self._MIN_HEIGHT)
         self.setFixedWidth(320)
+        self.setFixedHeight(self._MIN_HEIGHT)
 
     def _on_expand(self):
         """Emit expand request to restore main HUD window."""
@@ -357,18 +363,24 @@ class CompactChatInput(QWidget):
     # ── Dynamic height ──
 
     def _adjust_height(self):
-        """Resize height to fit content, clamped between min and max."""
+        """Resize height to fit content dynamically, expanding upward without overflowing."""
         doc = self._input.document()
-        # Use sizeHint for accurate content height
-        content_h = int(doc.size().height()) + 16  # padding
+        # Use available width for wrapping calculation
+        viewport_w = self._input.viewport().width()
+        if viewport_w > 0:
+            doc.setTextWidth(viewport_w)
+        content_h = int(doc.size().height()) + 56
         h = max(self._MIN_HEIGHT, min(self._MAX_HEIGHT, content_h))
         if h != self.height():
+            diff = h - self.height()
             self.setFixedHeight(h)
+            if self.isVisible():
+                self.move(self.x(), self.y() - diff)
 
     # ── Button toggle ──
 
     def set_processing(self, processing: bool):
-        """Switch button between Send and Stop states."""
+        """Switch button state."""
         self._is_processing = processing
         self._input.setEnabled(not processing)
         if processing:
@@ -381,28 +393,48 @@ class CompactChatInput(QWidget):
     def _on_toggle(self):
         if self._is_processing:
             self.stop_requested.emit()
+            self.close()
         else:
             text = self._input.toPlainText().strip()
             if text:
                 self.message_submitted.emit(text)
                 self._input.clear()
+                self._adjust_height()
+                self.close()  # Close input box immediately on send
 
-    # ── Enter to submit ──
+    # ── Key handling (Enter to submit, Escape to close) ──
 
     def eventFilter(self, obj, event):
         if obj is self._input and event.type() == event.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape:
+                self.close()
+                return True
             if event.key() == Qt.Key.Key_Return and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 if not self._is_processing:
                     self._on_toggle()
                     return True
         return super().eventFilter(obj, event)
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # ── Positioning ──
 
     def popup_near(self, icon_pos: QPoint):
         """Show centered above the floating icon."""
-        x = icon_pos.x() - self.width() // 2
+        self._adjust_height()
+        x = icon_pos.x() - (self.width() - _ICON_SIZE) // 2
         y = icon_pos.y() - self.height() - 8
+        # Keep inside screen bounds
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            x = max(geo.left() + 10, min(geo.right() - self.width() - 10, x))
+            y = max(geo.top() + 10, min(geo.bottom() - self.height() - 10, y))
         self.move(x, y)
         self.show()
         self.raise_()
@@ -435,3 +467,4 @@ class CompactChatInput(QWidget):
     def closeEvent(self, event):
         self.closed.emit()
         super().closeEvent(event)
+

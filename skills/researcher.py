@@ -99,4 +99,14 @@ class ResearcherSkill(Skill):
                 return response.content  # type: ignore[no-any-return]
             break
 
+        # If rounds were exhausted but we gathered tool results, synthesize findings
+        if any(m.get("role") == "tool" for m in messages):
+            messages.append({
+                "role": "user",
+                "content": "Please synthesize and summarize your final findings based on the research results gathered above.",
+            })
+            final_resp = llm.chat(messages, None, reason="researcher_synthesis")
+            if final_resp and hasattr(final_resp, "content") and final_resp.content:
+                return final_resp.content
+
         return "I couldn't find enough information on that topic. Try a different search query."

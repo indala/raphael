@@ -136,8 +136,21 @@ def _headers():
     }
 
 
+import time as _time
+
+_RESPONSE_CACHE: dict[str, tuple[int, str, float]] = {}
+_CACHE_TTL_SECONDS = 30.0
+
+
 def _get(path: str, params: dict | None = None) -> tuple[int, str]:
-    """Make a GET request. Returns (status_code, body_string)."""
+    """Make a GET request. Returns (status_code, body_string). Cached for 30s."""
+    cache_key = f"{path}?{sorted(params.items()) if params else ''}"
+    now = _time.time()
+    if cache_key in _RESPONSE_CACHE:
+        code, body, cached_time = _RESPONSE_CACHE[cache_key]
+        if (now - cached_time) < _CACHE_TTL_SECONDS:
+            return code, body
+
     headers = _headers()
     if headers is None:
         return 0, "Error: UPSTOX_ANALYTICS_API key is not configured. Set it in settings.toml (or via Settings dialog / Endpoints tab)"
@@ -155,7 +168,10 @@ def _get(path: str, params: dict | None = None) -> tuple[int, str]:
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return resp.status, resp.read().decode("utf-8")
+            body = resp.read().decode("utf-8")
+            if resp.status == 200:
+                _RESPONSE_CACHE[cache_key] = (resp.status, body, now)
+            return resp.status, body
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")[:500]
         logger.debug("Upstox HTTP %d: %s", e.code, body)

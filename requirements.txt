@@ -1,68 +1,10 @@
-# ── LLM Backend ─────────────────────────────────────────────────────
-openai>=1.0.0           # OpenAI-compatible API client (used by all backends)
+# Requirements for stock_monitor.py
 
-# ── HTTP / API ──────────────────────────────────────────────────────
-httpx>=0.25.0           # Async HTTP for LLMClient
-requests>=2.31.0        # STT cloud backends + C# bridge subprocess
+# Stock data fetching
+yfinance>=0.2.0
 
-# ── Model Context Protocol ──────────────────────────────────────────
-mcp>=1.0.0              # MCP SDK — ClientSession, stdio transport
+# Desktop notifications
+plyer>=2.0.0
 
-# ── System / Hardware ───────────────────────────────────────────────
-psutil>=5.9.0           # CPU/memory/process monitoring
-pycaw>=0.3.2            # Core Audio API — query audio device state
-
-# ── Windows UI Automation ───────────────────────────────────────────
-pyautogui>=0.9.54       # Mouse/keyboard control
-pygetwindow>=0.0.9      # Window enumeration
-pywin32>=306            # COM (SAPI5 TTS, Win32 API)
-
-# ── Screen Capture ──────────────────────────────────────────────────
-mss>=9.0.1              # Fast screen capture
-Pillow>=10.0.0          # Image processing (PIL fork)
-
-# ── Clipboard ───────────────────────────────────────────────────────
-pyperclip>=1.8.2        # Cross-platform clipboard access
-
-# ── Charts / Data Viz ───────────────────────────────────────────────
-matplotlib>=3.8.0       # Static chart generation
-plotly>=5.18.0          # Interactive HTML charts
-numpy>=1.24.0           # Audio arrays, chart data, STT processing
-
-# ── Voice — TTS ──────────────────────────────────────────────────────
-edge-tts>=6.1.0         # Microsoft Edge TTS (primary cloud engine)
-sounddevice>=0.4.6      # Audio playback (PortAudio bindings)
-miniaudio>=1.7.0        # MP3 decoding (edge-tts fallback)
-
-# ── Voice — STT ──────────────────────────────────────────────────────
-# useful-moonshine>=0.0.3  DISABLED: hard-pins torch==2.4.1 and
-# tokenizers==0.20.0 — neither ships a Python 3.14 (cp314) Windows wheel,
-# so this line breaks `pip install -r requirements.txt` entirely.
-# The MoonshineBackend (modules/stt_backends/moonshine.py) degrades
-# gracefully when the package is absent.
-
-# ── Desktop GUI (HUD) ───────────────────────────────────────────────
-PyQt6>=6.7.0            # HUD overlay (main window, canvas, log widget)
-mistune>=3.0.0          # Markdown → AST parser for log widget rendering
-
-# ── Browser Automation ──────────────────────────────────────────────
-playwright>=1.40.0      # Playwright browser control
-
-# ── Web Search ──────────────────────────────────────────────────────
-ddgs>=6.0               # DuckDuckGo search (replaces duckduckgo-search)
-
-# ── File Processing ─────────────────────────────────────────────────
-pdfplumber>=0.10.0      # PDF text + table extraction
-PyPDF2>=3.0.0           # PDF page manipulation (split, merge)
-python-docx>=1.0.0      # Word .docx read/write
-python-pptx>=0.6.23     # PowerPoint .pptx read/write
-openpyxl>=3.1.0 # Excel .xlsx read/write
-
-mutagen>=1.47.0         # Audio metadata tags
-yt-dlp>=2026.0.0            # YouTube audio search and downloader
-onnxruntime>=1.17.0         # ONNX runtime (silero-vad wake→VAD→ASR gate)
-silero-vad>=5.1.1           # Voice Activity Detection for the VAD gate
-
-# ── Testing ──────────────────────────────────────────────────────────
-pytest>=8.0.0               # Test framework (pytest -v tests/)
-pyrefly>=1.2.0
+# Other dependencies (usually included with Python)
+typing-extensions>=4.0.0

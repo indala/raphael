@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _BROWSER_TOOLS = [
     "browser_control", "web_search", "web_fetch",
     "capture_screen", "analyze_image",
+    "delegate_to_agent", "list_agents",
 ]
 
 
@@ -26,7 +27,7 @@ _BROWSER_TOOLS = [
 class BrowserAgent(BaseAgent):
     name = "browser"
     description = "Control a web browser — navigate, fill forms, take screenshots"
-    available_tools = ["browser_control", "web_search", "web_fetch", "capture_screen", "analyze_image"]
+    available_tools = _BROWSER_TOOLS
     max_rounds = 8
 
     def run(self, query: str, llm: LLMClient, executor: ToolExecutor) -> str:

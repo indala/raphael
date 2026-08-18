@@ -21,7 +21,7 @@ _CODING_TOOLS = [
     "write_file", "read_file", "edit_file", "list_directory",
     "process_file", "run_command", "copy_to_clipboard",
     "read_clipboard", "list_knowledge_files", "read_knowledge_file",
-    "web_search", "web_fetch",
+    "web_search", "web_fetch", "delegate_to_agent", "list_agents",
 ]
 
 
@@ -29,12 +29,7 @@ _CODING_TOOLS = [
 class CodingAgent(BaseAgent):
     name = "coding"
     description = "Write code, process files, run commands, use technical knowledge"
-    available_tools = [
-        "write_file", "read_file", "edit_file", "list_directory",
-        "process_file", "run_command", "copy_to_clipboard",
-        "read_clipboard", "list_knowledge_files", "read_knowledge_file",
-        "web_search", "web_fetch",
-    ]
+    available_tools = _CODING_TOOLS
     max_rounds = 10
 
     def run(self, query: str, llm: LLMClient, executor: ToolExecutor) -> str:

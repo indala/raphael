@@ -336,7 +336,7 @@ def delegate_parallel(tasks: list[dict]) -> str:
 
     try:
         results = pre_errors  # start with pre-validation errors
-        with ThreadPoolExecutor(max_workers=min(len(to_run), 4)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(to_run), 2)) as pool:
             futures = {pool.submit(_run_one, task): task for task in to_run}
             for future in as_completed(futures):
                 results.append(future.result())

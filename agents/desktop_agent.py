@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _DESKTOP_TOOLS = [
     "capture_screen", "ui_click", "ui_type_text", "ui_press_key",
     "ui_hotkey", "ui_focus_window", "ui_get_mouse_position",
-    "analyze_image",
+    "analyze_image", "delegate_to_agent", "list_agents",
 ]
 
 
@@ -27,11 +27,7 @@ _DESKTOP_TOOLS = [
 class DesktopAgent(BaseAgent):
     name = "desktop"
     description = "Control mouse, keyboard, windows, and take screenshots"
-    available_tools = [
-        "capture_screen", "ui_click", "ui_type_text", "ui_press_key",
-        "ui_hotkey", "ui_focus_window", "ui_get_mouse_position",
-        "analyze_image",
-    ]
+    available_tools = _DESKTOP_TOOLS
     max_rounds = 6
 
     def run(self, query: str, llm: LLMClient, executor: ToolExecutor) -> str:

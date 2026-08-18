@@ -338,6 +338,7 @@ class RaphaelController(QObject):
 
             # Wire floating icon signals
             self._floating_icon.double_clicked.connect(self._on_floating_double_click)
+            self._floating_icon.triple_clicked.connect(self._on_floating_triple_click)
             self._floating_icon.single_clicked.connect(self._on_floating_single_click)
             self._floating_icon.right_clicked.connect(self._on_floating_right_click)
             self._floating_icon.dragged.connect(self._on_icon_dragged)
@@ -361,11 +362,28 @@ class RaphaelController(QObject):
         except Exception as e:
             logger.warning("Failed to initialize floating minion: %s", e)
 
-        # ── Global Hotkey Listener (Win+Shift+R) ──
+        # ── Global Hotkey Listener (Win+Shift+R, Ctrl+Shift+I, Ctrl+Alt+I) ──
         try:
+            import win32con
             from modules.hotkeys import GlobalHotkeyListener
             self._hotkey_listener = GlobalHotkeyListener(
-                callback=lambda: QTimer.singleShot(0, self.ui.window.show_and_activate)
+                callback=lambda: QTimer.singleShot(0, self.ui.window.show_and_activate),
+                additional_hotkeys=[
+                    {
+                        "id": 9002,
+                        "mods": win32con.MOD_CONTROL | win32con.MOD_SHIFT,
+                        "vk": 0x49,  # 'I'
+                        "callback": lambda: QTimer.singleShot(0, self._on_hotkey_toggle_input),
+                        "name": "Ctrl+Shift+I (Compact Chat Input)",
+                    },
+                    {
+                        "id": 9003,
+                        "mods": win32con.MOD_CONTROL | win32con.MOD_ALT,
+                        "vk": 0x49,  # 'I'
+                        "callback": lambda: QTimer.singleShot(0, self._on_hotkey_toggle_input),
+                        "name": "Ctrl+Alt+I (Compact Chat Input)",
+                    },
+                ],
             )
             self._hotkey_listener.start()
         except Exception as e:
@@ -624,6 +642,29 @@ class RaphaelController(QObject):
             return
         self._compact_chat.popup_near(self._floating_icon.pos())
 
+    def _on_hotkey_toggle_input(self):
+        """Global shortcut (Ctrl+Shift+I / Ctrl+Alt+I): open or toggle compact chat input."""
+        if hasattr(self, "_compact_chat") and hasattr(self, "_floating_icon"):
+            if self._compact_chat.isVisible():
+                self._compact_chat.close()
+            else:
+                if not self._floating_icon.isVisible() and self.is_floating_icon_state():
+                    self._floating_icon.show()
+                    self._floating_icon.raise_()
+                self._compact_chat.popup_near(self._floating_icon.pos())
+
+    def _on_floating_triple_click(self):
+        """Triple click: stop any running process, stop spinning animation, and reopen input box."""
+        logger.info("Floating icon triple-clicked: stopping running process and reopening input.")
+        self._interrupt()
+        if hasattr(self, "_floating_icon"):
+            self._floating_icon.set_processing(False)
+            self._floating_icon.start_glow()
+            QTimer.singleShot(400, self._floating_icon.stop_glow)
+        if hasattr(self, "_compact_chat"):
+            self._compact_chat.set_processing(False)
+            self._compact_chat.popup_near(self._floating_icon.pos())
+
     def _on_floating_right_click(self, pos: QPoint):
         """Right click: show context menu near the floating icon."""
         from PyQt6.QtWidgets import QMenu
@@ -689,13 +730,15 @@ class RaphaelController(QObject):
 
     def _on_minion_submit(self, text: str):
         """Handle message submitted from the compact chat input."""
+        if hasattr(self, "_compact_chat"):
+            self._compact_chat.close()
+
         if self._is_processing():
-            self._compact_chat.set_processing(True)
             self.ui.write_log("sys", "Busy processing previous request...")
             return
         self._minion_response_pending = True
-        self._compact_chat.set_processing(True)
-        self._floating_icon.set_processing(True)
+        if hasattr(self, "_floating_icon"):
+            self._floating_icon.set_processing(True)
         self._submit_message(text, input_mode="text")
 
     def _on_tool_executed_event(self, event: str, data: dict):
@@ -1531,6 +1574,18 @@ class RaphaelController(QObject):
     def _done(self):
         self._processing_timer.stop()
         self._set_processing(False)
+
+        # Auto-open compact input box in floating icon mode if in chat mode / STT is off or muted
+        if self.is_floating_icon_state() or getattr(self, "_minion_response_pending", False):
+            is_chat_or_stt_off = (
+                not state.audio_input_available
+                or state.muted
+                or getattr(self, "_current_input_mode", "text") == "text"
+            )
+            if is_chat_or_stt_off and hasattr(self, "_compact_chat") and hasattr(self, "_floating_icon"):
+                # Delay slightly so response popup appears first, then input box opens with focus
+                QTimer.singleShot(250, lambda: self._compact_chat.popup_near(self._floating_icon.pos()))
+
         if state.muted:
             self.ui.set_state("MUTED")
         elif state.wake_word_required:

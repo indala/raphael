@@ -30,20 +30,41 @@ class GlobalHotkeyListener:
 
     HOTKEY_ID = 9001  # Unique ID for Raphael global hotkey
 
-    def __init__(self, callback: Callable[[], None] | None = None, modifiers: int | None = None, vk_code: int | None = None):
+    def __init__(
+        self,
+        callback: Callable[[], None] | None = None,
+        modifiers: int | None = None,
+        vk_code: int | None = None,
+        additional_hotkeys: list[dict] | None = None,
+    ):
         self._callback = callback
         self._thread: threading.Thread | None = None
         self._running = False
         self._hwnd = None
+        self._registered_ids: list[int] = []
+        self._hotkey_callbacks: dict[int, Callable[[], None]] = {}
 
-        # Default modifier: MOD_WIN (0x0008) + MOD_SHIFT (0x0004) = Win+Shift
-        # Default VK code: 'R' (0x52)
+        self._hotkey_specs: list[dict] = []
         if _WIN32_AVAILABLE:
-            self._modifiers = modifiers if modifiers is not None else (win32con.MOD_WIN | win32con.MOD_SHIFT)
-            self._vk_code = vk_code if vk_code is not None else 0x52  # 'R'
-        else:
-            self._modifiers = 0
-            self._vk_code = 0
+            main_mods = modifiers if modifiers is not None else (win32con.MOD_WIN | win32con.MOD_SHIFT)
+            main_vk = vk_code if vk_code is not None else 0x52  # 'R'
+            self._hotkey_specs.append({
+                "id": 9001,
+                "mods": main_mods,
+                "vk": main_vk,
+                "cb": callback,
+                "name": "Win+Shift+R (Main Window)",
+            })
+
+            if additional_hotkeys:
+                for idx, hk in enumerate(additional_hotkeys, start=9002):
+                    self._hotkey_specs.append({
+                        "id": hk.get("id", idx),
+                        "mods": hk.get("mods", win32con.MOD_CONTROL),
+                        "vk": hk.get("vk", 0x49),
+                        "cb": hk.get("callback"),
+                        "name": hk.get("name", f"Hotkey {idx}"),
+                    })
 
     def start(self) -> bool:
         """Start global hotkey listener thread.
@@ -87,25 +108,19 @@ class GlobalHotkeyListener:
                 0, 0, wndclass.hInstance, None,
             )
 
-            # Register hotkey with ID fallback (try 9001..9010)
-            registered = False
-            for hotkey_id in range(9001, 9011):
-                res = win32gui.RegisterHotKey(
-                    self._hwnd,
-                    hotkey_id,
-                    self._modifiers,
-                    self._vk_code,
-                )
+            for spec in self._hotkey_specs:
+                hid = spec["id"]
+                mods = spec["mods"]
+                vk = spec["vk"]
+                cb = spec["cb"]
+                res = win32gui.RegisterHotKey(self._hwnd, hid, mods, vk)
                 if res:
-                    self.HOTKEY_ID = hotkey_id
-                    registered = True
-                    break
-
-            if not registered:
-                logger.warning("Failed to register global hotkey (Win+Shift+R) — key shortcut or ID in use")
-                return
-
-            logger.info("Global hotkey registered (Win+Shift+R) — press anytime to raise Raphael")
+                    self._registered_ids.append(hid)
+                    if cb:
+                        self._hotkey_callbacks[hid] = cb
+                    logger.info("Global hotkey registered: %s (id=%d)", spec["name"], hid)
+                else:
+                    logger.debug("Failed to register global hotkey: %s", spec["name"])
 
             # Pump Win32 messages
             win32gui.PumpMessages()
@@ -113,20 +128,21 @@ class GlobalHotkeyListener:
             logger.debug("Global hotkey thread exit: %s", e)
         finally:
             if _WIN32_AVAILABLE and self._hwnd:
-                with contextlib.suppress(Exception):  # type: ignore[unreachable]
-                    win32gui.UnregisterHotKey(self._hwnd, self.HOTKEY_ID)
+                for hid in self._registered_ids:
+                    with contextlib.suppress(Exception):
+                        win32gui.UnregisterHotKey(self._hwnd, hid)
             self._running = False
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         """Window procedure callback for WM_HOTKEY events."""
         if msg == win32con.WM_HOTKEY:
-            if wparam == self.HOTKEY_ID:
-                logger.info("Global hotkey triggered")
-                if self._callback:
-                    try:
-                        self._callback()
-                    except Exception as e:
-                        logger.error("Hotkey callback error: %s", e)
+            hid = wparam
+            cb = self._hotkey_callbacks.get(hid)
+            if cb:
+                try:
+                    cb()
+                except Exception as e:
+                    logger.error("Hotkey callback error: %s", e)
             return 0
         elif msg == win32con.WM_DESTROY or msg == win32con.WM_CLOSE:
             win32gui.PostQuitMessage(0)

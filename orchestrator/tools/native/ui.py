@@ -217,19 +217,14 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "ui_press_key",
-                "description": "Press a keyboard key using C# SendInput (Win32). "
-                               "Common keys: enter, tab, escape, space, backspace, delete, "
-                               "shift, ctrl, alt, win (Windows key). "
-                               "Arrow keys: up, down, left, right. "
-                               "Function keys: f1 through f24. "
-                               "Other: home, end, pgup, pgdn, insert, printscreen, numlock, scrolllock, capslock, apps/menu. "
-                               "Numpad: numpad0-numpad9, add, subtract, multiply, divide, decimal, separator.",
+                "description": "Press and release a SINGLE keyboard key (e.g. 'enter', 'tab', 'escape', 'space', 'backspace', 'delete', 'up', 'down'). "
+                               "DO NOT use this for shortcut combinations (like Win+Shift+S, Ctrl+C, Alt+Tab) — ALWAYS use 'ui_hotkey' instead for combinations.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "key": {
                             "type": "string",
-                            "description": "Key name (e.g., 'enter', 'tab', 'escape', 'space')",
+                            "description": "Single key name (e.g., 'enter', 'tab', 'escape', 'space', 'backspace')",
                         },
                     },
                     "required": ["key"],
@@ -240,17 +235,18 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "ui_hotkey",
-                "description": "Press a combination of keys (hotkey) using C# SendInput (Win32). "
-                               "Example: ['ctrl', 'c'] for copy, ['win', 'r'] for Run dialog, "
+                "description": "Press a combination of keys SIMULTANEOUSLY (e.g. keyboard shortcuts). "
+                               "Examples: ['win', 'shift', 's'] for Windows Snipping Tool screenshot, "
+                               "['ctrl', 'c'] for copy, ['ctrl', 'v'] for paste, ['win', 'r'] for Run dialog, "
                                "['alt', 'tab'] for window switching. "
-                               "Use 'win' for the Windows key, 'shift'/'ctrl'/'alt' for modifiers.",
+                               "ALWAYS use this instead of multiple ui_press_key calls when modifiers are involved.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "keys": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Keys to press together (e.g. ['ctrl', 'c'], ['win', 'r'], ['alt', 'tab'])",
+                            "description": "Keys to press simultaneously (e.g. ['win', 'shift', 's'], ['ctrl', 'c'], ['alt', 'f4'])",
                         },
                     },
                     "required": ["keys"],
@@ -773,16 +769,74 @@ def ui_type_text(text: str) -> str:
     return "Failed to type text."
 
 
-def ui_press_key(key: str) -> str:
-    """Press a keyboard key (e.g. 'enter', 'tab', 'escape')."""
-    if _ui_control.press_key(key):
+_KEY_ALIASES = {
+    "windows": "win",
+    "win_key": "win",
+    "super": "win",
+    "cmd": "win",
+    "command": "win",
+    "control": "ctrl",
+    "escape": "esc",
+    "return": "enter",
+    "prtscr": "printscreen",
+    "prtsc": "printscreen",
+}
+
+
+def _normalize_key(k: str) -> str:
+    k = k.strip().lower()
+    return _KEY_ALIASES.get(k, k)
+
+
+def ui_press_key(key: str | None = None, keys: list[str] | str | None = None, **kwargs) -> str:
+    """Press a single keyboard key (e.g. 'enter', 'tab', 'escape', 'space')."""
+    # Defensive handling if caller passed 'keys' parameter
+    if key is None and keys is not None:
+        if isinstance(keys, list) and len(keys) == 1:
+            key = keys[0]
+        elif isinstance(keys, list):
+            return ui_hotkey(keys)
+        else:
+            key = str(keys)
+
+    if not key:
+        return "Error: key parameter is required for ui_press_key."
+
+    # Handle mouse actions if mistakenly passed to ui_press_key
+    if key.lower().startswith("mouse_"):
+        if "down" in key.lower():
+            btn = "right" if "right" in key.lower() else "left"
+            if _ui_control.mouse_down(btn):
+                return f"Pressed and holding mouse {btn} button."
+        elif "up" in key.lower():
+            btn = "right" if "right" in key.lower() else "left"
+            if _ui_control.mouse_up(btn):
+                return f"Released mouse {btn} button."
+        elif "move" in key.lower():
+            x = kwargs.get("x", 0)
+            y = kwargs.get("y", 0)
+            if _ui_control.move_to(int(x), int(y)):
+                return f"Moved mouse to ({x}, {y})."
+        return f"Error: '{key}' is a mouse action. Use mouse tools (ui_click, ui_drag, ui_mouse_down, ui_mouse_up)."
+
+    # If the LLM passed a shortcut string (e.g., "win+shift+s" or "win shift s"), auto-route to ui_hotkey
+    if any(sep in key for sep in ("+", "-", " ")):
+        parts = [k.strip() for k in key.replace("+", " ").replace("-", " ").split() if k.strip()]
+        if len(parts) > 1:
+            return ui_hotkey(parts)
+
+    norm_key = _normalize_key(key)
+    if _ui_control.press_key(norm_key):
         return f"Successfully pressed key: {key}."
     return f"Failed to press key: {key}."
 
 
 def ui_hotkey(keys: list[str]) -> str:
-    """Press a combination of keys (e.g. ['ctrl', 'c'])."""
-    if _ui_control.hotkey(*keys):
+    """Press a combination of keys simultaneously (e.g. ['win', 'shift', 's'], ['ctrl', 'c'])."""
+    if isinstance(keys, str):
+        keys = [k.strip() for k in keys.replace("+", " ").replace("-", " ").split() if k.strip()]
+    norm_keys = [_normalize_key(k) for k in keys]
+    if _ui_control.hotkey(*norm_keys):
         return f"Successfully executed hotkey combination: {keys}."
     return f"Failed to execute hotkey combination: {keys}."
 

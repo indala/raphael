@@ -21,6 +21,7 @@ class AnalyticsAgent(BaseAgent):
     available_tools: ClassVar[list[str]] = [
         "get_portfolio_holdings", "get_positions", "get_market_quote",
         "get_historical_data", "get_portfolio_summary",
+        "delegate_to_agent", "list_agents",
     ]
     max_rounds = 6
 

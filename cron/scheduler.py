@@ -69,11 +69,16 @@ def run_job(job: dict[str, Any], orchestrator: Any | None = None) -> tuple[bool,
 
         # Call orchestrator to process the interaction
         # This returns the assistant's response
-        response = orchestrator.process_interaction(
-            full_prompt,
-            interaction_type="cron",
-            read_only=True,
-        )
+        if hasattr(orchestrator, "process_message"):
+            response = orchestrator.process_message(full_prompt, input_mode="text")
+        elif hasattr(orchestrator, "process_interaction"):
+            response = orchestrator.process_interaction(
+                full_prompt,
+                interaction_type="cron",
+                read_only=True,
+            )
+        else:
+            raise AttributeError("Orchestrator has no process_message or process_interaction method")
 
         # Return success
         return True, response, None
