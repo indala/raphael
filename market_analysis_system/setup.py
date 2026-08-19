@@ -55,7 +55,7 @@ def create_main_files():
     """Create main Python files for the system"""
     
     # Main entry point
-    main_content = """#!/usr/bin/env python3
+    main_content = '''#!/usr/bin/env python3
 # Market Analysis System - Main Entry Point
 
 import sys
@@ -112,7 +112,7 @@ class MarketAnalysisSystem:
 if __name__ == "__main__":
     system = MarketAnalysisSystem()
     system.run()
-"""
+'''
     
     with open("market_analysis_system/src/main.py", "w") as f:
         f.write(main_content)

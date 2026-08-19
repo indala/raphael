@@ -28,7 +28,7 @@ def get_written_files_context() -> str:
     if not _written_files_registry:
         return ""
     lines = ["Files created/written this session (use these exact paths — do NOT search):"]
-    for resolved, original in _written_files_registry.items():
+    for resolved in _written_files_registry:
         lines.append(f"  • {resolved}")
     return "\n".join(lines)
 
@@ -69,7 +69,7 @@ def get_schemas() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "Read the contents of a text file. Returns the file content as a string. Supports all text-based file formats.",
+                "description": "Read the contents of a text file with file metadata and binary protection. Returns the file content as a string. Supports all text-based file formats.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -83,6 +83,68 @@ def get_schemas() -> list[dict]:
                         },
                     },
                     "required": ["file_path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "view_file",
+                "description": "View file contents with 1-based line numbers, file metadata (total lines, size, type), line slicing, and binary protection. Preferred for inspecting code files before editing.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Full path to the file to view",
+                        },
+                        "start_line": {
+                            "type": "integer",
+                            "description": "1-based starting line number (optional).",
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "description": "1-based ending line number (optional).",
+                        },
+                        "max_lines": {
+                            "type": "integer",
+                            "description": "Maximum number of lines to display. Default: 500.",
+                        },
+                    },
+                    "required": ["file_path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "replace_file_content",
+                "description": "Make a precise surgical replacement of a contiguous block of text in an existing file. Throws clear errors if the target block does not match.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Full path to the file to modify",
+                        },
+                        "target_content": {
+                            "type": "string",
+                            "description": "The exact existing text chunk to replace (must match characters and indentation exactly)",
+                        },
+                        "replacement_content": {
+                            "type": "string",
+                            "description": "The new replacement text to insert",
+                        },
+                        "start_line": {
+                            "type": "integer",
+                            "description": "Optional starting line hint for disambiguation",
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "description": "Optional ending line hint for disambiguation",
+                        },
+                    },
+                    "required": ["file_path", "target_content", "replacement_content"],
                 },
             },
         },
@@ -344,30 +406,179 @@ def write_file(file_path: str, content: str, append: bool = False) -> str:
         return f"Error writing file {file_path}: {e}"
 
 
+_BINARY_EXTENSIONS: dict[str, str] = {
+    ".pdf": "PDF document (use process_file with action='extract_text' or action='info')",
+    ".png": "Image file (use analyze_image or process_file with action='info')",
+    ".jpg": "Image file (use analyze_image or process_file with action='info')",
+    ".jpeg": "Image file (use analyze_image or process_file with action='info')",
+    ".gif": "Image file (use analyze_image)",
+    ".webp": "Image file (use analyze_image)",
+    ".ico": "Image file (use analyze_image)",
+    ".exe": "Windows executable binary (cannot read as plain text)",
+    ".dll": "Dynamic link library binary (cannot read as plain text)",
+    ".pyd": "Python native C-extension binary (cannot read as plain text)",
+    ".so": "Shared object library binary (cannot read as plain text)",
+    ".zip": "Archive file (use process_file with action='list' or action='extract')",
+    ".tar": "Archive file (use process_file with action='list' or action='extract')",
+    ".gz": "Archive file (use process_file with action='list' or action='extract')",
+    ".7z": "Archive file (use process_file with action='list' or action='extract')",
+    ".docx": "Word document (use process_file with action='extract_text')",
+    ".pptx": "PowerPoint document (use process_file with action='extract_text')",
+    ".xlsx": "Excel spreadsheet (use process_file with action='convert' or action='stats')",
+    ".mp3": "Audio file (use play_audio_file or process_file)",
+    ".wav": "Audio file (use play_audio_file or process_file)",
+    ".mp4": "Video file (use process_file with action='extract_audio')",
+    ".db": "SQLite database binary (use sqlite or database tools)",
+    ".sqlite": "SQLite database binary (use sqlite or database tools)",
+    ".pyc": "Compiled Python bytecode",
+}
+
+
 def read_file(file_path: str, max_chars: int = 50000) -> str:
-    """Read the contents of a text file.
-
-    Args:
-        file_path: Full path to the file to read.
-        max_chars: Maximum characters to return (prevents overflow).
-
-    Returns:
-        The file content as a string.
-    """
+    """Read the contents of a text file with metadata and binary protection."""
     from pathlib import Path
     try:
         path = Path(file_path).expanduser().resolve()
         if not path.is_file():
             return f"Error: File not found at {file_path}"
+
+        ext = path.suffix.lower()
+        if ext in _BINARY_EXTENSIONS:
+            return (
+                f"Cannot read '{path.name}' as plain text: detected {ext} binary format.\n"
+                f"Recommendation: {_BINARY_EXTENSIONS[ext]}"
+            )
+
         # Register for read-before-edit enforcement
         _read_file_registry.add(str(path))
         with open(path, encoding="utf-8", errors="replace") as f:
             content = f.read(max_chars)
+
+        file_size_kb = round(path.stat().st_size / 1024, 1)
+        type_name = ext.lstrip(".").upper() if ext else "TEXT"
+        header = f"=== [File: {path.name} | Type: {type_name} | Size: {file_size_kb} KB] ===\n"
+
         if len(content) >= max_chars:
-            content += "\n...(truncated, file exceeds max_chars)"
-        return content
+            content += f"\n\n...(truncated at {max_chars} chars, total file size is {file_size_kb} KB. Use view_file or read_file_range to inspect remaining lines)"
+        return header + content
     except Exception as e:
         return f"Error reading file {file_path}: {e}"
+
+
+def view_file(
+    file_path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    max_lines: int = 500,
+) -> str:
+    """View file contents with 1-based line numbers, metadata header, and line range slicing."""
+    from pathlib import Path
+    try:
+        path = Path(file_path).expanduser().resolve()
+        if not path.is_file():
+            return f"Error: File not found at {file_path}"
+
+        ext = path.suffix.lower()
+        if ext in _BINARY_EXTENSIONS:
+            return (
+                f"Cannot view '{path.name}' as plain text: detected {ext} binary format.\n"
+                f"Recommendation: {_BINARY_EXTENSIONS[ext]}"
+            )
+
+        _read_file_registry.add(str(path))
+
+        with open(path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+
+        total_lines = len(all_lines)
+        file_size_kb = round(path.stat().st_size / 1024, 1)
+
+        s_line = start_line if start_line is not None and start_line >= 1 else 1
+        if s_line > total_lines:
+            return f"Start line {s_line} exceeds total file length ({total_lines} lines in {path.name})."
+
+        e_line = end_line if end_line is not None and end_line >= s_line else min(s_line + max_lines - 1, total_lines)
+        e_line = min(e_line, s_line + max_lines - 1, total_lines)
+
+        selected_lines = all_lines[s_line - 1 : e_line]
+
+        type_name = ext.lstrip(".").upper() if ext else "TEXT"
+        header = f"=== [File: {path.name} | Type: {type_name} | Lines: {s_line}-{e_line} of {total_lines} | Size: {file_size_kb} KB] ==="
+
+        if total_lines > e_line and end_line is None:
+            header += f"\n[Note: Showing first {e_line} of {total_lines} lines. Specify start_line/end_line to view remaining content.]"
+
+        numbered = [f"{s_line + i:4d}: {line.rstrip()}" for i, line in enumerate(selected_lines)]
+        return header + "\n" + "\n".join(numbered)
+    except Exception as e:
+        return f"Error viewing file {file_path}: {e}"
+
+
+def replace_file_content(
+    file_path: str,
+    target_content: str,
+    replacement_content: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> str:
+    """Make a precise surgical replacement of a contiguous block of text in an existing file."""
+    from pathlib import Path
+    try:
+        path = Path(file_path).expanduser().resolve()
+        resolved = str(path)
+
+        if resolved not in _read_file_registry:
+            return (
+                f"Error: You must read or view '{file_path}' before editing it. "
+                f"Use view_file or read_file first."
+            )
+
+        if not path.is_file():
+            return f"Error: File not found at {file_path}"
+
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+
+        if start_line is not None or end_line is not None:
+            lines = content.splitlines(keepends=True)
+            total = len(lines)
+            s = (start_line - 1) if start_line and start_line >= 1 else 0
+            e = end_line if end_line and end_line >= s else total
+            e = min(e, total)
+
+            sub_content = "".join(lines[s:e])
+            if target_content not in sub_content:
+                return (
+                    f"Error: Target content was not found within lines {s+1}-{e} of '{path.name}'. "
+                    f"Please verify the line range or target text."
+                )
+
+            new_sub = sub_content.replace(target_content, replacement_content, 1)
+            new_content = "".join(lines[:s]) + new_sub + "".join(lines[e:])
+        else:
+            if target_content not in content:
+                return (
+                    f"Error: Target content was not found in '{path.name}'. "
+                    f"Please ensure target_content exactly matches the existing file contents."
+                )
+
+            occurrences = content.count(target_content)
+            if occurrences > 1:
+                return (
+                    f"Error: Target content occurs {occurrences} times in '{path.name}'. "
+                    f"Please provide more surrounding context or specify start_line and end_line."
+                )
+
+            new_content = content.replace(target_content, replacement_content, 1)
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        _written_files_registry[str(path)] = file_path
+        new_size = path.stat().st_size
+        return f"Successfully updated '{path.name}' ({new_size} bytes). Replaced 1 block."
+    except Exception as e:
+        return f"Error replacing content in {file_path}: {e}"
 
 
 def list_directory(directory_path: str = ".") -> str:

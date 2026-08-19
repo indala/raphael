@@ -6,6 +6,8 @@ Learns from corrections over time via agent evolution memory.
 """
 
 import logging
+from typing import ClassVar
+
 from agents import register
 from agents.base_agent import BaseAgent
 from orchestrator.skill_registry import execute_skill
@@ -16,8 +18,10 @@ logger = logging.getLogger(__name__)
 @register
 class ResearcherAgent(BaseAgent):
     name = "researcher"
-    description = "Search the web, fetch page content, and check weather"
-    available_tools = ["web_search", "web_fetch", "get_weather"]
+    description = "Search the web, fetch page content, check weather, and delegate findings"
+    available_tools: ClassVar[list[str]] = [
+        "web_search", "web_fetch", "get_weather", "delegate_to_agent", "list_agents"
+    ]
     max_rounds = 6
 
     def run(self, query, llm, executor) -> str:

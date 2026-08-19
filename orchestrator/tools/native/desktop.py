@@ -117,6 +117,14 @@ def get_schemas() -> list[dict]:
                 "parameters": {"type": "object", "properties": {}},
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_active_window_info",
+                "description": "Get rich information about the user's currently active (focused) foreground window: process name, window title, PID, position, and active Explorer path if applicable.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
     ]
 
 
@@ -901,3 +909,41 @@ def desktop_snapshot_v2() -> str:
         logger.debug("Tray in snapshot: %s", e)
 
     return "\n".join(parts)
+
+
+def get_active_window_info() -> str:
+    """Get rich information about the user's currently focused (active foreground) window."""
+    from modules import ui_control
+    try:
+        windows = ui_control.enum_windows()
+        fg_win = next((w for w in windows if w.get("is_foreground")), None)
+        if not fg_win and windows:
+            # First non-minimized window if none explicitly marked
+            fg_win = next((w for w in windows if w.get("rect_left", 0) > -32000), None)
+
+        if not fg_win:
+            return "No active foreground window detected."
+
+        title = fg_win.get("title", "Untitled")
+        pname = fg_win.get("process_name", "Unknown")
+        pid = fg_win.get("pid", 0)
+        rect = f"{fg_win.get('rect_left', 0)},{fg_win.get('rect_top', 0)} to {fg_win.get('rect_right', 0)},{fg_win.get('rect_bottom', 0)}"
+
+        # Check explorer selection if Explorer is active
+        extra = ""
+        if "explorer" in pname.lower():
+            sel = ui_control.get_explorer_selection()
+            if sel:
+                folder = sel.get("folder", "")
+                selected = sel.get("selected_files", [])
+                extra = f"\n  • Explorer Folder: {folder}\n  • Selected Files ({len(selected)}): {', '.join(selected[:5])}"
+
+        return (
+            f"Active Foreground Window:\n"
+            f"  • Process: {pname} (PID: {pid})\n"
+            f"  • Title: \"{_clean(title, 150)}\"\n"
+            f"  • Position: [{rect}]{extra}"
+        )
+    except Exception as e:
+        logger.error("get_active_window_info error: %s", e)
+        return f"Error detecting active window: {e}"

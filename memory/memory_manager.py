@@ -130,6 +130,22 @@ def search_memory(query: str, category: str | None = None, limit: int = 20) -> l
     return []
 
 
+def search_memory_hybrid(
+    query: str, category: str | None = None, limit: int = 20, rrf_k: int = 60
+) -> list[dict]:
+    """Search memory entries using Native SIMD Vector + BM25 Hybrid Search.
+    
+    Combines FTS5 BM25 keyword matching with SIMD vector cosine similarity
+    and Reciprocal Rank Fusion (RRF).
+    """
+    if _USE_SQLITE and _store is not None:
+        try:
+            return _store.hybrid_search(query, category=category, limit=limit, rrf_k=rrf_k)
+        except Exception as e:
+            logger.error("Hybrid memory search failed: %s", e)
+    return []
+
+
 def _save_memory_sqlite(memory: dict) -> None:
     """Bulk-write all categories to SQLite — used by consolidation."""
     assert _store is not None

@@ -15,9 +15,13 @@ logger = logging.getLogger(__name__)
 @register
 class LibrarianAgent(BaseAgent):
     name = "librarian"
-    description = "Handle memory-related queries (recall, save, manage memories)"
-    available_tools = ["recall_memory", "save_memory", "list_memory_categories", "delegate_to_agent", "list_agents"]
-    max_rounds = 4
+    description = "Handle memory-related queries (recall, search, save, and manage memories)"
+    available_tools = [
+        "recall_memory", "save_memory", "list_memories",
+        "delete_memory_entry", "learn_from_feedback",
+        "delegate_to_agent", "list_agents",
+    ]
+    max_rounds = 6
 
     def run(self, query, llm, executor) -> str:
         # 1. Load user memory context

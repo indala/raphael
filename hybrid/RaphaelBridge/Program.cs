@@ -1,14 +1,12 @@
-/// <summary>
-/// RaphaelBridge — JSON stdin/stdout subprocess bridge.
-/// Avoids pythonnet compatibility issues by communicating via newline-delimited JSON.
-/// </summary>
-
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RaphaelHybrid;
 
 using var monitor = new SystemMonitor();
 var tts = new TtsEngine();
+var writeLock = new object();
+var monitorLock = new object();
+var ttsLock = new object();
 
 string? line;
 while ((line = Console.In.ReadLine()) is not null)
@@ -32,20 +30,40 @@ while ((line = Console.In.ReadLine()) is not null)
         continue;
     }
 
-    try
+    ThreadPool.QueueUserWorkItem(_ =>
     {
-        ProcessRequest(req);
-    }
-    catch (Exception ex)
-    {
-        RespondError(req.Id, ex.Message);
-    }
+        try
+        {
+            ProcessRequest(req);
+        }
+        catch (Exception ex)
+        {
+            RespondError(req.Id, ex.Message);
+        }
+    });
 }
 
 void ProcessRequest(Request req)
 {
     switch (req.Method)
     {
+        // ── Introspection & Liveness ──
+        case "ping":
+            Respond(req.Id, "pong");
+            break;
+        case "version":
+            Respond(req.Id, new
+            {
+                version = "1.2.0",
+                framework = ".NET 10",
+                os = Environment.OSVersion.ToString(),
+                process_id = Environment.ProcessId,
+            });
+            break;
+        case "list_methods":
+            Respond(req.Id, ProgramMeta.AllMethods);
+            break;
+
         // ── HybridInfo ──
         case "self_test":
             Respond(req.Id, HybridInfo.SelfTest());
@@ -454,8 +472,12 @@ void ProcessRequest(Request req)
 void Respond(long id, object? data)
 {
     var resp = new Response { Id = id, Result = data };
-    Console.Out.WriteLine(JsonSerializer.Serialize(resp, JsonOpts.Default));
-    Console.Out.Flush();
+    var json = JsonSerializer.Serialize(resp, JsonOpts.Default);
+    lock (writeLock)
+    {
+        Console.Out.WriteLine(json);
+        Console.Out.Flush();
+    }
 }
 
 void RespondNull(long id)
@@ -466,11 +488,49 @@ void RespondNull(long id)
 void RespondError(long id, string message)
 {
     var resp = new Response { Id = id, Error = message };
-    Console.Out.WriteLine(JsonSerializer.Serialize(resp, JsonOpts.Default));
-    Console.Out.Flush();
+    var json = JsonSerializer.Serialize(resp, JsonOpts.Default);
+    lock (writeLock)
+    {
+        Console.Out.WriteLine(json);
+        Console.Out.Flush();
+    }
 }
 
-// ── Types ──
+// ── Types & Metadata ──
+
+static class ProgramMeta
+{
+    public static readonly string[] AllMethods =
+    [
+        "ping", "version", "list_methods", "self_test",
+        "input_move_to", "input_click", "input_click_at", "input_get_cursor",
+        "input_type_text", "input_press_key", "input_release_key", "input_tap_key",
+        "input_hotkey", "input_double_click", "input_double_click_at",
+        "input_smooth_move_to", "input_drag", "input_scroll", "input_scroll_at",
+        "input_move_relative", "input_mouse_down", "input_mouse_up", "input_get_screen_size",
+        "capture_primary", "capture_monitor", "screen_size",
+        "tts_speak", "tts_speak_async", "tts_stop", "tts_is_speaking",
+        "tts_set_rate", "tts_set_volume", "tts_get_voices", "tts_set_voice",
+        "window_find", "window_focus", "window_get_active_title", "window_get_all_titles",
+        "window_get_all", "window_close", "window_minimize", "window_maximize",
+        "window_get_rect", "window_move", "window_resize", "window_set_always_on_top",
+        "window_set_opacity", "window_hide", "window_show",
+        "power_sleep", "power_hibernate", "power_lock", "power_shutdown", "power_reboot",
+        "toast_show", "service_list", "service_start", "service_stop",
+        "env_get", "env_set", "process_kill", "process_wait",
+        "shortcut_create", "recycle_bin_get", "recycle_bin_empty",
+        "key_is_pressed", "key_caps_lock", "key_num_lock",
+        "monitor_get_dpi", "brightness_get", "brightness_set",
+        "clipboard_copy_text", "clipboard_paste_text", "clipboard_has_text", "clipboard_clear",
+        "audio_play_mp3", "audio_stop_all",
+        "registry_get_browser_progid", "registry_read_current_user", "registry_read_local_machine",
+        "shell_open", "shell_launch",
+        "clipboard_copy_image", "clipboard_has_image", "clipboard_get_file_list", "clipboard_has_files",
+        "audio_get_state", "system_snapshot", "monitors_get_all",
+        "system_state_get", "explorer_get_selection", "explorer_get_all_selections",
+        "taskbar_get_info", "tray_get_icons"
+    ];
+}
 
 record Request
 {

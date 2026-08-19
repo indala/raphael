@@ -18,10 +18,17 @@ _BRIDGE_DIR = Path(__file__).resolve().parent / "bin" / "Bridge"
 _BRIDGE_EXE = _BRIDGE_DIR / "RaphaelBridge.exe"
 
 _process: subprocess.Popen | None = None
-_lock = threading.Lock()
+_write_lock = threading.Lock()
+_state_lock = threading.Lock()
 _next_id = 0
 _available = False
 _shutdown_active = False
+
+_pending_events: dict[int, threading.Event] = {}
+_pending_results: dict[int, tuple[Any, str | None]] = {}
+
+_stdout_thread: threading.Thread | None = None
+_stderr_thread: threading.Thread | None = None
 
 
 # ── Typed Bridge Exception Hierarchy ─────────────────────────────────────────
@@ -42,69 +49,55 @@ class BridgeExecutionError(BridgeError):
     """Raised when the C# bridge returns an explicit execution error."""
 
 
-def _start() -> bool:
-    """Launch the bridge subprocess."""
-    global _process, _available, _stderr_thread
-
-    if _shutdown_active:
-        return False
-
-    if _process is not None and _process.poll() is None:
-        return True  # Already running
-
-    if not _BRIDGE_EXE.exists():
-        logger.warning("Bridge EXE not found: %s", _BRIDGE_EXE)
-        return False
+def _stdout_reader():
+    """Continuously read JSON responses from the bridge and multiplex to waiting callers."""
+    global _process, _available
+    proc = _process
+    if proc is None or proc.stdout is None:
+        return
 
     try:
-        import os
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = 0x08000000  # CREATE_NO_WINDOW
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                resp = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
-        _process = subprocess.Popen(
-            [str(_BRIDGE_EXE)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",   # Explicit UTF-8: prevents charmap errors on non-ASCII chars
-            errors="replace",   # Fallback: replace any remaining un-encodable chars
-            bufsize=1,          # Line-buffered
-            creationflags=creationflags,
-        )
-        _available = True
-        # Drain stderr in a background thread to prevent pipe deadlocks
-        # and capture DLL-load errors gracefully.
-        _stderr_thread = threading.Thread(
-            target=_drain_stderr,
-            daemon=True,
-            name="bridge-stderr",
-        )
-        _stderr_thread.start()
-        logger.info("Bridge subprocess started (PID %s)", _process.pid)
-        return True
+            req_id = resp.get("id")
+            if req_id is not None:
+                with _state_lock:
+                    err = resp.get("error")
+                    res = resp.get("result")
+                    _pending_results[req_id] = (res, err)
+                    ev = _pending_events.get(req_id)
+                    if ev is not None:
+                        ev.set()
     except Exception as e:
-        logger.error("Failed to start bridge: %s", e)
-        _available = False
-        return False
+        logger.debug("Bridge stdout reader exited: %s", e)
+    finally:
+        with _state_lock:
+            _available = False
+            # Unblock all pending callers on process termination
+            for req_id, ev in list(_pending_events.items()):
+                if req_id not in _pending_results:
+                    _pending_results[req_id] = (None, "Bridge process terminated unexpectedly")
+                ev.set()
 
 
 def _drain_stderr():
-    """Read and log bridge stderr (background thread).
-
-    Without this the stderr pipe fills → subprocess deadlock.
-    Also captures DLL-not-found errors for diagnostics.
-    """
+    """Read and log bridge stderr (background thread)."""
     global _process
-    if _process is None or _process.stderr is None:
+    proc = _process
+    if proc is None or proc.stderr is None:
         return
     try:
-        for line in _process.stderr:
+        for line in proc.stderr:
             line = line.rstrip("\n\r")
             if not line:
                 continue
-            # Check for known missing-runtime patterns
             if "Windows App SDK" in line or "Microsoft.UI" in line or "DLL not found" in line:
                 logger.warning(
                     "Bridge runtime missing: %s\n  Install Windows App SDK runtime:\n"
@@ -117,18 +110,72 @@ def _drain_stderr():
         pass
 
 
-# Background thread for draining bridge stderr
-_stderr_thread: threading.Thread | None = None
+def _start() -> bool:
+    """Launch the bridge subprocess and start background I/O threads."""
+    global _process, _available, _stderr_thread, _stdout_thread, _shutdown_active
+
+    if _shutdown_active:
+        return False
+
+    with _state_lock:
+        if _process is not None and _process.poll() is None:
+            return True
+
+        if not _BRIDGE_EXE.exists():
+            logger.warning("Bridge EXE not found: %s", _BRIDGE_EXE)
+            return False
+
+        try:
+            import os
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = 0x08000000  # CREATE_NO_WINDOW
+
+            _process = subprocess.Popen(
+                [str(_BRIDGE_EXE)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=creationflags,
+            )
+            _available = True
+
+            _stderr_thread = threading.Thread(
+                target=_drain_stderr,
+                daemon=True,
+                name="bridge-stderr",
+            )
+            _stderr_thread.start()
+
+            _stdout_thread = threading.Thread(
+                target=_stdout_reader,
+                daemon=True,
+                name="bridge-stdout",
+            )
+            _stdout_thread.start()
+
+            logger.info("Bridge subprocess started (PID %s) with concurrent multiplexing", _process.pid)
+            return True
+        except Exception as e:
+            logger.error("Failed to start bridge: %s", e)
+            _available = False
+            return False
 
 
 def _stop():
-    """Terminate the bridge subprocess."""
+    """Terminate the bridge subprocess and unblock waiting threads."""
     global _process, _available, _shutdown_active
     _shutdown_active = True
-    if _process is not None:
+    with _state_lock:
+        _available = False
         p = _process
         _process = None
-        _available = False
+
+    if p is not None:
         if p.poll() is None:
             try:
                 p.terminate()
@@ -136,7 +183,6 @@ def _stop():
             except Exception:
                 with contextlib.suppress(Exception):
                     p.kill()
-        # Safely close all standard streams to prevent Errno 22 / traceback printout
         for stream in (p.stdin, p.stdout, p.stderr):
             if stream:
                 with contextlib.suppress(Exception):
@@ -147,93 +193,103 @@ def _stop():
 atexit.register(_stop)
 
 
+def restart() -> bool:
+    """Explicitly restart the bridge process (used for auto-recovery)."""
+    global _shutdown_active
+    _stop()
+    _shutdown_active = False
+    return _start()
+
+
+def is_available() -> bool:
+    """Return True if the bridge is currently running or can be launched."""
+    if _shutdown_active:
+        return False
+    if _process is not None and _process.poll() is None:
+        return True
+    return _BRIDGE_EXE.exists()
+
+
 def _call(method: str, *args, timeout: float = 10.0) -> Any:
-    """Send a JSON-RPC call to the bridge and return the result.
+    """Send a multiplexed JSON-RPC call to the bridge and return the result.
 
-    Args:
-        method: The bridge method name.
-        *args: Positional arguments for the method.
-        timeout: Maximum seconds to wait for a response (default 10s).
-                 Prevents indefinite blocking if the C# process hangs.
-
-    Raises:
-        RuntimeError: If bridge is unavailable, process dies, or timeout.
-        TimeoutError: If the C# process does not respond within `timeout` seconds.
+    Concurrent requests are multiplexed without holding a global serialization lock.
     """
     global _next_id, _available, _process
     if _shutdown_active:
-        raise RuntimeError("Bridge shutting down")
+        raise BridgeUnavailableError("Bridge shutting down")
     if not _available and not _start():
-        raise RuntimeError("Bridge not available")
+        raise BridgeUnavailableError("Bridge not available")
 
-    # Quick health check — if process is dead, mark unavailable and bail
-    if _process is None or _process.poll() is not None:
+    proc = _process
+    if proc is None or proc.poll() is not None:
         _available = False
-        raise RuntimeError("Bridge process not running")
+        raise BridgeUnavailableError("Bridge process not running")
 
-    with _lock:
+    ev = threading.Event()
+    with _state_lock:
         _next_id += 1
         req_id = _next_id
-        request = {"id": req_id, "method": method, "args": list(args)}
-        line = json.dumps(request, ensure_ascii=False)
+        _pending_events[req_id] = ev
 
-        try:
-            assert _process is not None and _process.stdin is not None
-            _process.stdin.write(line + "\n")
-            _process.stdin.flush()
-        except (BrokenPipeError, OSError) as e:
-            _available = False
-            raise RuntimeError(f"Bridge pipe broken: {e}") from e
+    request = {"id": req_id, "method": method, "args": list(args)}
+    line = json.dumps(request, ensure_ascii=False)
 
-        # Read response with timeout (prevents hang on crashed C# process)
-        response_line = _read_line_with_timeout(_process.stdout, timeout)
-        if response_line is None:
-            # Timed out — kill the process to unblock stale reader threads
-            _available = False
-            p = _process
-            _process = None
-            try:
-                p.terminate()
-                p.wait(timeout=2)
-            except Exception:
-                with contextlib.suppress(Exception):
-                    p.kill()
-            logger.error("Bridge call '%s' timed out after %ss — process terminated", method, timeout)
-            raise TimeoutError(
-                f"Bridge call '{method}' timed out after {timeout}s — process restarted"
-            )
-        if not response_line:
-            _available = False
-            raise RuntimeError("Bridge process closed unexpectedly")
-
-        try:
-            resp = json.loads(response_line)
-        except json.JSONDecodeError as e:
-            _available = False
-            raise RuntimeError(f"Bridge response invalid: {e}") from e
-
-        if resp.get("error"):
-            raise RuntimeError(resp["error"])
-        return resp.get("result")
-
-
-def _read_line_with_timeout(stream, timeout: float) -> str | None:
-    """Read a line from a text stream with timeout. Returns None on timeout."""
-    import queue as _queue
-
-    result_queue: _queue.Queue = _queue.Queue(maxsize=1)
-    read_thread = threading.Thread(
-        target=lambda: result_queue.put(stream.readline() if stream else ""),
-        daemon=True,
-    )
-    read_thread.start()
-    read_thread.join(timeout=timeout)
-    if read_thread.is_alive():
-        return None  # Timeout — caller should handle
     try:
-        return result_queue.get_nowait()  # type: ignore[no-any-return]
-    except _queue.Empty:
-        return ""
+        with _write_lock:
+            if proc.stdin is None or proc.poll() is not None:
+                raise BridgeUnavailableError("Bridge stdin not open")
+            proc.stdin.write(line + "\n")
+            proc.stdin.flush()
+    except (BrokenPipeError, OSError) as e:
+        with _state_lock:
+            _available = False
+            _pending_events.pop(req_id, None)
+            _pending_results.pop(req_id, None)
+        raise BridgeUnavailableError(f"Bridge pipe broken: {e}") from e
+
+    signaled = ev.wait(timeout=timeout)
+
+    with _state_lock:
+        _pending_events.pop(req_id, None)
+        result_entry = _pending_results.pop(req_id, None)
+
+    if not signaled:
+        logger.warning("Bridge call '%s' (id=%s) timed out after %ss", method, req_id, timeout)
+        raise BridgeTimeoutError(f"Bridge call '{method}' timed out after {timeout}s")
+
+    if result_entry is None:
+        raise BridgeExecutionError("No response received from bridge")
+
+    result, err = result_entry
+    if err:
+        raise BridgeExecutionError(err)
+    return result
+
+
+def ping(timeout: float = 10.0) -> bool:
+    """Ping the bridge to verify liveness and fast round-trip response."""
+    try:
+        res = _call("ping", timeout=timeout)
+        return res == "pong"
+    except Exception:
+        return False
+
+
+def version(timeout: float = 10.0) -> dict[str, Any] | None:
+    """Return bridge runtime version and environment metadata."""
+    try:
+        return _call("version", timeout=timeout)
+    except Exception:
+        return None
+
+
+def list_methods(timeout: float = 10.0) -> list[str] | None:
+    """Query all methods supported by the active bridge executable."""
+    try:
+        return _call("list_methods", timeout=timeout)
+    except Exception:
+        return None
 
 
 # ── Lazy bridge wrappers (fail silently to fall back to Python) ──
@@ -842,19 +898,3 @@ class CAudioDeviceState:
             logger.error("Audio state query failed: %s", ex)
             return None
 
-
-class CHybridInfo:  # type: ignore[no-redef]
-    @staticmethod
-    def SelfTest() -> bool | None:
-        return LazyBridge.call("self_test")
-
-
-def is_available() -> bool:
-    """Check if the bridge is available and working."""
-    if not _BRIDGE_EXE.exists():
-        return False
-    try:
-        result = CHybridInfo.SelfTest()
-        return bool(result)
-    except Exception:
-        return False

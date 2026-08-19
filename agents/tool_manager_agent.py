@@ -9,14 +9,15 @@ import logging
 
 from agents import register
 from agents.base_agent import BaseAgent
-from orchestrator.skill_registry import execute_skill
 from orchestrator.core import LLMClient, ToolExecutor
+from orchestrator.skill_registry import execute_skill
 
 logger = logging.getLogger(__name__)
 
 _TOOL_MGMT_TOOLS = [
     "run_command", "process_file", "web_search", "web_fetch",
     "read_file", "write_file",
+    "check_tool_health", "show_capability_graph", "export_tool",
     "recall_memory", "save_memory",
     "list_agents", "delegate_to_agent",
 ]

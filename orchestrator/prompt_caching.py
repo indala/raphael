@@ -45,15 +45,15 @@ PROTECT_TAIL = 3
 # Minimum number of messages before caching is worth doing
 MIN_MESSAGES_FOR_CACHING = 6
 
-# Anthropic host patterns
-_ANTHROPIC_HOST_RE = re.compile(r"anthropic\.com", re.IGNORECASE)
-_CLAUDE_MODEL_RE   = re.compile(r"^claude", re.IGNORECASE)
+# Anthropic / OpenRouter host patterns
+_ANTHROPIC_HOST_RE = re.compile(r"(anthropic\.com|openrouter\.ai)", re.IGNORECASE)
+_CLAUDE_MODEL_RE = re.compile(r"^claude", re.IGNORECASE)
 
 
 # ── Eligibility ──────────────────────────────────────────────────────────────
 
 def is_anthropic_backend(base_url: str, model: str) -> bool:
-    """Return True if this request targets an Anthropic-compatible endpoint."""
+    """Return True if this request targets an Anthropic or OpenRouter cache-compatible endpoint."""
     return bool(
         _ANTHROPIC_HOST_RE.search(base_url or "")
         or _CLAUDE_MODEL_RE.match(model or "")
@@ -95,7 +95,7 @@ def _mark_message_cached(msg: dict) -> dict:
     blocks = _to_content_list(m.get("content"))
     if blocks:
         # Attach cache_control to the LAST block of this message
-        new_blocks = list(blocks[:-1]) + [_add_breakpoint(blocks[-1])]
+        new_blocks = [*list(blocks[:-1]), _add_breakpoint(blocks[-1])]
         m["content"] = new_blocks
     return m
 
@@ -105,10 +105,7 @@ def _has_breakpoint(msg: dict) -> bool:
     content = msg.get("content")
     if not isinstance(content, list):
         return False
-    for block in content:
-        if isinstance(block, dict) and "cache_control" in block:
-            return True
-    return False
+    return any(isinstance(block, dict) and "cache_control" in block for block in content)
 
 
 # ── Strip helpers (for non-Anthropic backends) ────────────────────────────────

@@ -25,6 +25,7 @@ _NATIVE_MODULE_NAMES = [
     "browser", "ui", "screen", "weather", "background_tools", "knowledge",
     "web_fetch", "delegation", "upstox", "playground_tools", "goals",
     "music", "music_player_tools", "email", "agent", "desktop", "audio", "power",
+    "dev_tools",
 ]
 
 

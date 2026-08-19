@@ -22,5 +22,10 @@ installer/
 # Playwright MCP cache
 .playwright-mcp/
 
+# Rust target artifacts
+target/
+crates/**/target/
+crates/raphael_core/target/
+
 # Private signing keys
 *.pfx

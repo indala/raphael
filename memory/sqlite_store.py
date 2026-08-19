@@ -36,15 +36,18 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sqlite3
 import threading
+import zlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import cast
 
 import config
+from modules.native_core import batch_cosine_similarity, top_k_indices
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +119,27 @@ CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
     VALUES ('delete', old.id, old.category, old.key, old.value);
 END;
 """
+
+
+def _vectorize_text(text: str, dim: int = 64) -> list[float]:
+    """Fast deterministic subword/n-gram feature hashing vectorizer for SIMD similarity."""
+    if not text:
+        return [0.0] * dim
+    vec = [0.0] * dim
+    words = re.findall(r"\w+", text.lower())
+    for w in words:
+        h = zlib.crc32(w.encode("utf-8")) % dim
+        vec[h] += 1.0
+        if len(w) >= 3:
+            for i in range(len(w) - 2):
+                gram = w[i:i+3]
+                gram_h = zlib.crc32(gram.encode("utf-8")) % dim
+                vec[gram_h] += 0.5
+
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm > 0.0:
+        return [x / norm for x in vec]
+    return vec
 
 
 class MemoryStore:
@@ -413,7 +437,7 @@ class MemoryStore:
         limit: int = DEFAULT_SEARCH_LIMIT,
         rrf_k: int = 60,
     ) -> list[dict[str, str | float]]:
-        """Hybrid search combining BM25/FTS5 keyword ranking with semantic matching via RRF.
+        """Hybrid search combining BM25/FTS5 keyword ranking with SIMD vector matching via RRF.
 
         Uses Reciprocal Rank Fusion (RRF) (inspired by OpenJarvis/OpenClaw):
             RRF_score(d) = sum(1 / (k + rank_i))
@@ -424,8 +448,7 @@ class MemoryStore:
         # 1. Exact/BM25 keyword search results
         keyword_results = self.search(query, category=category, limit=limit * 2)
 
-        # 2. Semantic token overlap / partial key match ranking
-        tokens = {t.lower() for t in re.findall(r"\w+", query) if len(t) > 2}
+        # 2. Native SIMD vector search over candidate entries
         all_entries: list[tuple[str, str, str, str]] = []
         if category:
             cat_dict = self.get_category(category)
@@ -437,22 +460,27 @@ class MemoryStore:
                 for k, data in kvs.items():
                     all_entries.append((cat, k, data["value"], data["updated"]))
 
-        scored_semantic = []
-        for cat, k, val, upd in all_entries:
-            if not tokens:
-                break
-            text = f"{k} {val}".lower()
-            overlap = sum(1 for t in tokens if t in text)
-            if overlap > 0:
-                scored_semantic.append({
-                    "category": cat,
-                    "key": k,
-                    "value": val,
-                    "updated": upd,
-                    "match_ratio": overlap / len(tokens),
-                })
-        scored_semantic.sort(key=lambda x: x["match_ratio"], reverse=True)
-        semantic_results = scored_semantic[:limit * 2]
+        semantic_results = []
+        if all_entries:
+            query_vec = _vectorize_text(query)
+            candidate_vecs = [_vectorize_text(f"{k} {val}") for _, k, val, _ in all_entries]
+            sim_scores = batch_cosine_similarity(query_vec, candidate_vecs)
+
+            # Filter non-zero scores and pick top K using SIMD indexer
+            top_k_count = min(len(all_entries), limit * 2)
+            top_indices = top_k_indices(sim_scores, top_k_count)
+
+            for idx in top_indices:
+                score = sim_scores[idx]
+                if score > 0.05:  # meaningful similarity threshold
+                    cat, k, val, upd = all_entries[idx]
+                    semantic_results.append({
+                        "category": cat,
+                        "key": k,
+                        "value": val,
+                        "updated": upd,
+                        "similarity": score,
+                    })
 
         # 3. Reciprocal Rank Fusion
         rrf_scores: dict[tuple[str, str], float] = defaultdict(float)

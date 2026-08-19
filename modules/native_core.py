@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def is_rust_accelerated() -> bool:
     return _RUST_AVAILABLE
 
 
-def perceptual_diff(buf_a: bytes, buf_b: bytes) -> f64:
+def perceptual_diff(buf_a: bytes, buf_b: bytes) -> float:
     """Compute the mean absolute difference ratio between two image byte buffers in [0.0, 1.0]."""
     if _RUST_AVAILABLE and _native_mod is not None:
         try:
@@ -42,7 +42,7 @@ def perceptual_diff(buf_a: bytes, buf_b: bytes) -> f64:
     if not buf_a or not buf_b or len(buf_a) != len(buf_b):
         return 1.0
 
-    diff_sum = sum(abs(a - b) for a, b in zip(buf_a, buf_b))
+    diff_sum = sum(abs(a - b) for a, b in zip(buf_a, buf_b, strict=True))
     max_possible = len(buf_a) * 255.0
     return float(diff_sum / max_possible)
 
@@ -59,7 +59,7 @@ def cosine_similarity(vec_a: Sequence[float], vec_b: Sequence[float]) -> float:
     if not vec_a or not vec_b or len(vec_a) != len(vec_b):
         return 0.0
 
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    dot = sum(a * b for a, b in zip(vec_a, vec_b, strict=True))
     norm_a = math.sqrt(sum(a * a for a in vec_a))
     norm_b = math.sqrt(sum(b * b for b in vec_b))
     denom = norm_a * norm_b
@@ -82,3 +82,70 @@ def fast_token_estimate(text: str) -> int:
     char_count = len(text)
     estimate = int(max(words * 1.33, char_count / 3.8))
     return max(1, estimate)
+
+
+def audio_rms(samples: Sequence[float]) -> float:
+    """Compute Root Mean Square (RMS) energy of an audio buffer."""
+    if not samples:
+        return 0.0
+
+    if _RUST_AVAILABLE and _native_mod is not None:
+        try:
+            return float(_native_mod.audio_rms(list(samples)))
+        except Exception:
+            pass
+
+    # Pure Python fallback
+    sum_sq = sum(s * s for s in samples)
+    return math.sqrt(sum_sq / len(samples))
+
+
+def fast_vad_energy(samples: Sequence[float], threshold: float = 0.02) -> bool:
+    """Fast VAD energy check: returns True if audio RMS exceeds threshold."""
+    if not samples:
+        return False
+
+    if _RUST_AVAILABLE and _native_mod is not None:
+        try:
+            return bool(_native_mod.fast_vad_energy(list(samples), threshold))
+        except Exception:
+            pass
+
+    # Pure Python fallback
+    return audio_rms(samples) >= threshold
+
+
+def batch_cosine_similarity(
+    query: Sequence[float], candidates: Sequence[Sequence[float]]
+) -> list[float]:
+    """Batch compute cosine similarities between a single query vector and candidate vectors."""
+    if not query or not candidates:
+        return []
+
+    if _RUST_AVAILABLE and _native_mod is not None:
+        try:
+            q_list = list(query)
+            c_lists = [list(c) for c in candidates]
+            return list(_native_mod.batch_cosine_similarity(q_list, c_lists))
+        except Exception:
+            pass
+
+    # Pure Python fallback
+    return [cosine_similarity(query, cand) for cand in candidates]
+
+
+def top_k_indices(scores: Sequence[float], k: int) -> list[int]:
+    """Return the indices of the top-k highest scores in descending order."""
+    if not scores or k <= 0:
+        return []
+
+    if _RUST_AVAILABLE and _native_mod is not None:
+        try:
+            return list(_native_mod.top_k_indices(list(scores), k))
+        except Exception:
+            pass
+
+    # Pure Python fallback
+    indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+    return [idx for idx, _ in indexed[:k]]
+

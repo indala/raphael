@@ -571,24 +571,52 @@ def open_url(url: str) -> str:
 
 
 def run_command(command: str) -> str:
-    """Run a system command with timeout and process tree cleanup."""
+    """Run a system/shell command with timeout and process tree cleanup.
+
+    On Windows, executes via PowerShell so shell built-ins (dir, type, copy, etc.),
+    cmdlets, and backslash paths work seamlessly.
+    """
+    if not command or not command.strip():
+        return "Empty command."
+
     try:
-        import shlex as _shlex
-        cmd_args = _shlex.split(command)
-        if not cmd_args:
-            return "Empty command."
-        proc = subprocess.Popen(
-            cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            creationflags=_NO_WINDOW,
-        )
+        if os.name == "nt":
+            proc = subprocess.Popen(
+                ["cmd.exe", "/d", "/c", command],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=_NO_WINDOW,
+            )
+        else:
+            proc = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
         try:
             stdout, stderr = proc.communicate(timeout=25)
-            output = stdout or stderr
-            return output[:2000] if output else "Command completed with no output."
+            out_str = stdout or ""
+            err_str = stderr or ""
+            if err_str and not out_str:
+                output = err_str
+            elif err_str and out_str:
+                output = f"{out_str}\n[STDERR]:\n{err_str}"
+            else:
+                output = out_str
+
+            output = output.strip()
+            return output[:3000] if output else "Command completed with no output."
         except subprocess.TimeoutExpired:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True,
-                               creationflags=_NO_WINDOW)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    creationflags=_NO_WINDOW,
+                )
             else:
                 proc.kill()
             return "Command timed out after 25 seconds."

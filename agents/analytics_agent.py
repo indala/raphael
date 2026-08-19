@@ -8,6 +8,7 @@ Learns from corrections over time via agent evolution memory.
 
 import logging
 from typing import ClassVar
+
 from agents import register
 from agents.base_agent import BaseAgent
 
@@ -21,9 +22,10 @@ class AnalyticsAgent(BaseAgent):
     available_tools: ClassVar[list[str]] = [
         "get_portfolio_holdings", "get_positions", "get_market_quote",
         "get_historical_data", "get_portfolio_summary",
+        "generate_chart", "render_playground_chart", "render_playground_html",
         "delegate_to_agent", "list_agents",
     ]
-    max_rounds = 6
+    max_rounds = 8
 
     def run(self, query, llm, executor) -> str:
         from orchestrator.memory_agent import get_relevant_context
@@ -43,13 +45,15 @@ class AnalyticsAgent(BaseAgent):
             "- Get intraday positions with `get_positions`\n"
             "- Check live market quotes with `get_market_quote`\n"
             "- Analyze historical trends with `get_historical_data`\n"
-            "- Get a comprehensive portfolio summary with `get_portfolio_summary`\n\n"
+            "- Get a comprehensive portfolio summary with `get_portfolio_summary`\n"
+            "- Generate visual charts & plots with `generate_chart`, `render_playground_chart`, and `render_playground_html`\n\n"
             "**How to analyze:**\n"
             "1. Start by fetching the portfolio summary or holdings\n"
             "2. For specific stocks, get live quotes and historical data\n"
-            "3. Provide clear insights, not just raw numbers\n"
-            "4. Flag warnings: concentration risk, underperformance, market trends\n"
-            "5. For buy/sell suggestions: show your reasoning—always say "
+            "3. Render visual charts when analyzing trends or asset allocations\n"
+            "4. Provide clear insights, not just raw numbers\n"
+            "5. Flag warnings: concentration risk, underperformance, market trends\n"
+            "6. For buy/sell suggestions: show your reasoning—always say "
             "'this is not financial advice'\n\n"
             "Be honest: if data is unavailable or the API fails, say so clearly.\n\n"
             "**Cross-Agent Collaboration:**\n"
